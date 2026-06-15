@@ -36,7 +36,17 @@ export default function Order() {
   const inspectionMap = useMemo(() => Object.fromEntries(inspections.map(i => [i.orderId, i])), [inspections])
   const supportMap = useMemo(() => Object.fromEntries(supportRemovals.map(s => [s.orderId, s])), [supportRemovals])
   const postProcessMap = useMemo(() => Object.fromEntries(postProcesses.map(p => [p.orderId, p])), [postProcesses])
-  const shipmentMap = useMemo(() => Object.fromEntries(shipments.map(s => [s.orderId, s])), [shipments])
+  const shipmentMap = useMemo(() => {
+    const map: Record<string, typeof shipments> = {}
+    shipments.forEach(s => {
+      if (!map[s.orderId]) map[s.orderId] = []
+      map[s.orderId].push(s)
+    })
+    Object.keys(map).forEach(k => {
+      map[k].sort((a, b) => new Date(b.shippedAt).getTime() - new Date(a.shippedAt).getTime())
+    })
+    return map
+  }, [shipments])
 
   const buildTimeline = (order: Order) => {
     const currentIdx = STAGE_ORDER.indexOf(order.status)
@@ -78,8 +88,8 @@ export default function Order() {
       if (stage === 'shipping') {
         detail = '成品待发货'
       }
-      if (stage === 'completed' && shipmentMap[order.id]) {
-        const sh = shipmentMap[order.id]
+      if (stage === 'completed' && shipmentMap[order.id]?.length) {
+        const sh = shipmentMap[order.id][0]
         time = sh.shippedAt ? new Date(sh.shippedAt).toLocaleDateString('zh-CN') : ''
         detail = `${sh.courierCompany} · ${sh.trackingNo}`
       }
@@ -92,7 +102,8 @@ export default function Order() {
 
   if (selectedOrder) {
     const timeline = buildTimeline(selectedOrder)
-    const shipment = shipmentMap[selectedOrder.id]
+    const orderShipments = shipmentMap[selectedOrder.id] ?? []
+    const latestShipment = orderShipments[0]
 
     return (
       <div className="page">
@@ -132,15 +143,33 @@ export default function Order() {
               </div>
             </div>
 
-            {shipment && (
+            {latestShipment && (
               <div className="card" style={{ padding: 16, border: '1px solid rgba(34,197,94,0.3)' }}>
-                <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6, color: '#22C55E' }}><Truck size={16} /> 发货信息</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>快递公司</span><b>{shipment.courierCompany}</b></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>快递单号</span><b style={{ fontFamily: 'Rajdhani, sans-serif', color: '#4A90D9' }}>{shipment.trackingNo}</b></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>发货时间</span><b>{new Date(shipment.shippedAt).toLocaleString('zh-CN')}</b></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>运输状态</span><b style={{ color: shipment.status === 'delivered' ? '#22C55E' : '#3B82F6' }}>{shipment.status === 'shipped' ? '运输中' : '已签收'}</b></div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 6, color: '#22C55E' }}><Truck size={16} /> 发货信息</h3>
+                  {orderShipments.length > 1 && (
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: 'rgba(34,197,94,0.2)', color: '#22C55E', fontWeight: 600 }}>共 {orderShipments.length} 条</span>
+                  )}
                 </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13, marginBottom: orderShipments.length > 1 ? 12 : 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>快递公司</span><b>{latestShipment.courierCompany}</b></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>快递单号</span><b style={{ fontFamily: 'Rajdhani, sans-serif', color: '#4A90D9' }}>{latestShipment.trackingNo}</b></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>发货时间</span><b>{new Date(latestShipment.shippedAt).toLocaleString('zh-CN')}</b></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>运输状态</span><b style={{ color: latestShipment.status === 'delivered' ? '#22C55E' : '#3B82F6' }}>{latestShipment.status === 'shipped' ? '运输中' : '已签收'}</b></div>
+                </div>
+                {orderShipments.length > 1 && (
+                  <div style={{ borderTop: '1px solid #333', paddingTop: 12 }}>
+                    <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>历史发货记录：</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {orderShipments.slice(1).map(sh => (
+                        <div key={sh.id} style={{ padding: '8px 10px', background: '#16181D', borderRadius: 6, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ color: '#999' }}>{sh.courierCompany} · {sh.trackingNo}</span>
+                          <span style={{ color: '#666' }}>{new Date(sh.shippedAt).toLocaleDateString('zh-CN')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -214,7 +243,8 @@ export default function Order() {
             <tbody>
               {orders.map(order => {
                 const job = printJobMap[order.id]
-                const shipment = shipmentMap[order.id]
+                const orderShipments = shipmentMap[order.id] ?? []
+                const latestShipment = orderShipments[0]
                 const currentIdx = STAGE_ORDER.indexOf(order.status)
                 const progress = Math.round(((currentIdx + 0.5) / STAGE_ORDER.length) * 100)
                 const printProgress = job ? Math.round((job.currentLayer / job.totalLayers) * 100) : 0
@@ -244,10 +274,13 @@ export default function Order() {
                       ) : <span style={{ color: '#666', fontSize: 12 }}>未安排</span>}
                     </td>
                     <td>
-                      {shipment ? (
+                      {latestShipment ? (
                         <div style={{ fontSize: 12 }}>
-                          <div>{new Date(shipment.shippedAt).toLocaleDateString('zh-CN')}</div>
-                          <div style={{ color: '#22C55E', fontSize: 11 }}>{shipment.courierCompany}</div>
+                          <div>{new Date(latestShipment.shippedAt).toLocaleDateString('zh-CN')}</div>
+                          <div style={{ color: '#22C55E', fontSize: 11 }}>
+                            {latestShipment.courierCompany}
+                            {orderShipments.length > 1 && <span style={{ color: '#666', marginLeft: 4 }}>({orderShipments.length}次)</span>}
+                          </div>
                         </div>
                       ) : <span style={{ color: '#666', fontSize: 12 }}>未发货</span>}
                     </td>

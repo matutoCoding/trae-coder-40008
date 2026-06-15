@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useStore } from '@/store'
-import { RotateCw, ZoomIn, Scissors, Box, AlertTriangle, Info, ShieldAlert, ChevronDown, FileCheck, X, Download, Printer } from 'lucide-react'
+import { RotateCw, ZoomIn, Scissors, Box, AlertTriangle, Info, ShieldAlert, ChevronDown, FileCheck, X, Download, Printer, CheckCircle, XCircle, RefreshCw, Undo2 } from 'lucide-react'
+import type { ModelInspection, DefectItem } from '@/store'
 
 const severityColor: Record<string, string> = { critical: '#EF4444', warning: '#EAB308', info: '#4A90D9' }
 const severityLabel: Record<string, string> = { critical: '严重', warning: '警告', info: '提示' }
@@ -14,22 +15,92 @@ const defectLabel: Record<string, string> = {
   'non-manifold': '非流形边', 'normal-flip': '法线翻转', 'thin-wall': '薄壁', 'overlap': '重叠面',
 }
 
+function generateDraftInspection(orderId: string): Omit<ModelInspection, 'id'> {
+  const now = new Date()
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+  const inspectors = ['刘工', '陈工', '王工', '张工', '李工']
+  const inspector = inspectors[Math.floor(Math.random() * inspectors.length)]
+  const defectTemplates: DefectItem[] = [
+    { type: 'non-manifold', severity: 'critical', description: '模型存在非流形边，需要修复', count: 1 + Math.floor(Math.random() * 3) },
+    { type: 'normal-flip', severity: 'info', description: '部分面法线方向不一致，已自动修正', count: 2 + Math.floor(Math.random() * 5) },
+    { type: 'thin-wall', severity: 'warning', description: '局部区域壁厚偏薄，建议加厚', count: 1 + Math.floor(Math.random() * 2) },
+    { type: 'overlap', severity: 'info', description: '存在重叠面，已自动合并', count: 1 + Math.floor(Math.random() * 4) },
+  ]
+  const defectCount = 1 + Math.floor(Math.random() * 3)
+  const shuffled = [...defectTemplates].sort(() => Math.random() - 0.5)
+  const defects = shuffled.slice(0, defectCount)
+  const totalDefectCount = defects.reduce((sum, d) => sum + d.count, 0)
+  const isPassed = !defects.some(d => d.severity === 'critical') && totalDefectCount <= 8
+  return {
+    orderId,
+    isPassed,
+    defectCount: totalDefectCount,
+    defects,
+    inspectedAt: dateStr,
+    inspector,
+  }
+}
+
 export default function Inspection() {
-  const { inspections, orders, createInspectionForOrder } = useStore()
+  const { inspections, orders, addInspection, confirmInspection, rejectInspection, createInspectionForOrder } = useStore()
   const [selectedOrderId, setSelectedOrderId] = useState(orders[1]?.id ?? '')
   const [showReport, setShowReport] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [draftInspection, setDraftInspection] = useState<Omit<ModelInspection, 'id'> | null>(null)
+  const [reportMode, setReportMode] = useState<'view' | 'draft'>('view')
+
   const inspection = inspections.find(i => i.orderId === selectedOrderId)
   const order = orders.find(o => o.id === selectedOrderId)
+  const displayInspection = reportMode === 'draft' ? draftInspection : inspection
 
-  const handleGenerateInspection = () => {
+  const handleGenerateDraft = () => {
     if (!selectedOrderId || inspection) return
     setIsGenerating(true)
     setTimeout(() => {
-      createInspectionForOrder(selectedOrderId)
+      const draft = generateDraftInspection(selectedOrderId)
+      setDraftInspection(draft)
+      setReportMode('draft')
       setIsGenerating(false)
       setShowReport(true)
     }, 800)
+  }
+
+  const handleConfirmReport = () => {
+    if (!draftInspection) return
+    const id = addInspection(draftInspection)
+    confirmInspection(id)
+    setDraftInspection(null)
+    setReportMode('view')
+    setShowReport(false)
+  }
+
+  const handleRegenerate = () => {
+    if (!selectedOrderId) return
+    if (inspection) {
+      rejectInspection(inspection.id)
+    }
+    setIsGenerating(true)
+    setTimeout(() => {
+      const draft = generateDraftInspection(selectedOrderId)
+      setDraftInspection(draft)
+      setReportMode('draft')
+      setIsGenerating(false)
+      setShowReport(true)
+    }, 600)
+  }
+
+  const handleReject = () => {
+    if (!inspection) return
+    if (confirm('确定要退回该订单修改吗？退回后检查记录将清除，订单回到待处理状态。')) {
+      rejectInspection(inspection.id)
+      setShowReport(false)
+    }
+  }
+
+  const handleRejectDraft = () => {
+    setDraftInspection(null)
+    setReportMode('view')
+    setShowReport(false)
   }
 
   const handlePrintReport = () => {
@@ -37,7 +108,7 @@ export default function Inspection() {
   }
 
   const handleDownloadReport = () => {
-    if (!inspection || !order) return
+    if (!displayInspection || !order) return
     const lines = [
       '========== 金属3D打印模型检查报告 ==========',
       '',
@@ -51,14 +122,15 @@ export default function Inspection() {
       `交付日期: ${order.deliveryDate}`,
       '',
       '---------- 检查信息 ----------',
-      `检查人员: ${inspection.inspector}`,
-      `检查时间: ${inspection.inspectedAt}`,
-      `缺陷总数: ${inspection.defectCount}`,
-      `检查结论: ${inspection.isPassed ? '通过' : '未通过'}`,
+      `检查人员: ${displayInspection.inspector}`,
+      `检查时间: ${displayInspection.inspectedAt}`,
+      `缺陷总数: ${displayInspection.defectCount}`,
+      `检查结论: ${displayInspection.isPassed ? '通过' : '未通过'}`,
+      reportMode === 'draft' ? '报告状态: 草稿（待确认）' : '',
       '',
       '---------- 缺陷明细 ----------',
     ]
-    inspection.defects.forEach((d, i) => {
+    displayInspection.defects.forEach((d, i) => {
       lines.push(`${i + 1}. [${severityLabel[d.severity]}] ${defectLabel[d.type]} × ${d.count}`)
       lines.push(`   描述: ${d.description}`)
       lines.push('')
@@ -80,7 +152,7 @@ export default function Inspection() {
         <div style={{ position: 'relative' }}>
           <select
             value={selectedOrderId}
-            onChange={e => setSelectedOrderId(e.target.value)}
+            onChange={e => { setSelectedOrderId(e.target.value); setDraftInspection(null); setReportMode('view') }}
             style={{ appearance: 'none', paddingRight: 28, color: '#e5e7eb', background: '#1e293b', border: '1px solid #334155', borderRadius: 6, padding: '6px 28px 6px 10px', fontSize: 13 }}
           >
             {orders.map(o => <option key={o.id} value={o.id}>{o.id} - {o.modelFile}</option>)}
@@ -132,7 +204,7 @@ export default function Inspection() {
               <div style={{ color: '#64748b', fontSize: 13, textAlign: 'center' }}>该订单暂无检查记录</div>
               <button
                 className="btn-primary"
-                onClick={handleGenerateInspection}
+                onClick={handleGenerateDraft}
                 disabled={isGenerating}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 20px', fontSize: 13, marginTop: 8, opacity: isGenerating ? 0.6 : 1 }}
               >
@@ -165,31 +237,55 @@ export default function Inspection() {
           <span>检查时间: <b style={{ color: '#e5e7eb' }}>{inspection?.inspectedAt ?? '-'}</b></span>
           <span>订单: <b style={{ color: '#e5e7eb' }}>{order?.modelFile ?? '-'}</b></span>
         </div>
-        {inspection ? (
-          <button
-            className="btn-primary"
-            onClick={() => setShowReport(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px', fontSize: 13 }}
-          >
-            <FileCheck size={15} /> 查看检查报告
-          </button>
-        ) : (
-          <button
-            className="btn-primary"
-            onClick={handleGenerateInspection}
-            disabled={isGenerating}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px', fontSize: 13, opacity: isGenerating ? 0.6 : 1 }}
-          >
-            <RotateCw size={15} style={{ animation: isGenerating ? 'spin 1s linear infinite' : 'none' }} />
-            {isGenerating ? '检查中...' : '发起模型检查'}
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {inspection ? (
+            <>
+              <button
+                className="btn-secondary"
+                onClick={() => { setReportMode('view'); setShowReport(true) }}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: 13 }}
+              >
+                <FileCheck size={15} /> 查看报告
+              </button>
+              {!inspection.isPassed && (
+                <>
+                  <button
+                    className="btn-secondary"
+                    onClick={handleRegenerate}
+                    disabled={isGenerating}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: 13, opacity: isGenerating ? 0.6 : 1 }}
+                  >
+                    <RefreshCw size={15} style={{ animation: isGenerating ? 'spin 1s linear infinite' : 'none' }} />
+                    重新检查
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    onClick={handleReject}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: 13, color: '#EF4444', borderColor: 'rgba(239,68,68,0.3)' }}
+                  >
+                    <Undo2 size={15} /> 退回修改
+                  </button>
+                </>
+              )}
+            </>
+          ) : (
+            <button
+              className="btn-primary"
+              onClick={handleGenerateDraft}
+              disabled={isGenerating}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px', fontSize: 13, opacity: isGenerating ? 0.6 : 1 }}
+            >
+              <RotateCw size={15} style={{ animation: isGenerating ? 'spin 1s linear infinite' : 'none' }} />
+              {isGenerating ? '检查中...' : '发起模型检查'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 报告模态框 */}
-      {showReport && inspection && order && (
+      {showReport && displayInspection && order && (
         <div
-          onClick={() => setShowReport(false)}
+          onClick={() => { setShowReport(false); if (reportMode === 'draft') setDraftInspection(null) }}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}
           className="animate-fade-in"
         >
@@ -202,8 +298,11 @@ export default function Inspection() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <FileCheck size={20} style={{ color: '#FF6B35' }} />
                 <h2 className="font-display" style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>模型检查报告</h2>
+                {reportMode === 'draft' && (
+                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: 'rgba(234,179,8,0.2)', color: '#EAB308', fontWeight: 600 }}>草稿</span>
+                )}
               </div>
-              <button onClick={() => setShowReport(false)} style={{ background: 'transparent', border: 'none', color: '#999', cursor: 'pointer', padding: 4 }}>
+              <button onClick={() => { setShowReport(false); if (reportMode === 'draft') setDraftInspection(null) }} style={{ background: 'transparent', border: 'none', color: '#999', cursor: 'pointer', padding: 4 }}>
                 <X size={18} />
               </button>
             </div>
@@ -240,9 +339,9 @@ export default function Inspection() {
                   检查信息
                 </h4>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, background: '#16181D', padding: 14, borderRadius: 8 }}>
-                  <div><span style={{ color: '#666', display: 'block', fontSize: 11 }}>检查人员</span><b style={{ color: '#e5e7eb', fontSize: 15 }}>{inspection.inspector}</b></div>
-                  <div><span style={{ color: '#666', display: 'block', fontSize: 11 }}>检查时间</span><b style={{ color: '#e5e7eb', fontSize: 15 }}>{inspection.inspectedAt}</b></div>
-                  <div><span style={{ color: '#666', display: 'block', fontSize: 11 }}>缺陷总数</span><b style={{ color: inspection.defectCount > 0 ? '#EF4444' : '#22C55E', fontSize: 15 }}>{inspection.defectCount}</b></div>
+                  <div><span style={{ color: '#666', display: 'block', fontSize: 11 }}>检查人员</span><b style={{ color: '#e5e7eb', fontSize: 15 }}>{displayInspection.inspector}</b></div>
+                  <div><span style={{ color: '#666', display: 'block', fontSize: 11 }}>检查时间</span><b style={{ color: '#e5e7eb', fontSize: 15 }}>{displayInspection.inspectedAt}</b></div>
+                  <div><span style={{ color: '#666', display: 'block', fontSize: 11 }}>缺陷总数</span><b style={{ color: displayInspection.defectCount > 0 ? '#EF4444' : '#22C55E', fontSize: 15 }}>{displayInspection.defectCount}</b></div>
                 </div>
               </div>
 
@@ -250,10 +349,10 @@ export default function Inspection() {
               <div style={{ marginBottom: 20 }}>
                 <h4 style={{ color: '#FF6B35', fontSize: 14, fontWeight: 600, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ width: 3, height: 14, background: '#FF6B35', borderRadius: 2 }}></span>
-                  缺陷明细 ({inspection.defects.length} 项)
+                  缺陷明细 ({displayInspection.defects.length} 项)
                 </h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {inspection.defects.map((d, i) => (
+                  {displayInspection.defects.map((d, i) => (
                     <div key={i} style={{ background: '#16181D', borderRadius: 8, padding: 12, borderLeft: `4px solid ${severityColor[d.severity]}` }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -272,29 +371,49 @@ export default function Inspection() {
               </div>
 
               {/* 检查结论 */}
-              <div style={{ background: inspection.isPassed ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)', borderRadius: 8, padding: 16, border: `1px solid ${inspection.isPassed ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, textAlign: 'center' }}>
+              <div style={{ background: displayInspection.isPassed ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)', borderRadius: 8, padding: 16, border: `1px solid ${displayInspection.isPassed ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#999', marginBottom: 6 }}>综合判定结论</div>
-                <div className="font-display" style={{ fontSize: 28, fontWeight: 700, color: inspection.isPassed ? '#22C55E' : '#EF4444', letterSpacing: 2 }}>
-                  {inspection.isPassed ? '✓ 检查通过' : '✗ 检查未通过'}
+                <div className="font-display" style={{ fontSize: 28, fontWeight: 700, color: displayInspection.isPassed ? '#22C55E' : '#EF4444', letterSpacing: 2 }}>
+                  {displayInspection.isPassed ? '✓ 检查通过' : '✗ 检查未通过'}
                 </div>
                 <div style={{ fontSize: 11, color: '#666', marginTop: 8 }}>
-                  {inspection.isPassed
+                  {displayInspection.isPassed
                     ? '模型符合打印要求，可进入材料备料工序'
                     : '模型存在需要修复的缺陷，请联系客户确认后重新检查'}
                 </div>
+                {reportMode === 'draft' && (
+                  <div style={{ fontSize: 11, color: '#EAB308', marginTop: 8 }}>
+                    ⚠ 此为草稿报告，确认后将正式生效并推进生产流程
+                  </div>
+                )}
               </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '14px 20px', borderTop: '1px solid var(--border-color)' }}>
-              <button className="btn-secondary" onClick={handleDownloadReport} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Download size={14} /> 下载报告
-              </button>
-              <button className="btn-secondary" onClick={handlePrintReport} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Printer size={14} /> 打印
-              </button>
-              <button className="btn-primary" onClick={() => setShowReport(false)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                确认关闭
-              </button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '14px 20px', borderTop: '1px solid var(--border-color)' }}>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button className="btn-secondary" onClick={handleDownloadReport} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Download size={14} /> 下载报告
+                </button>
+                <button className="btn-secondary" onClick={handlePrintReport} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Printer size={14} /> 打印
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                {reportMode === 'draft' ? (
+                  <>
+                    <button className="btn-secondary" onClick={handleRejectDraft} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <X size={14} /> 取消
+                    </button>
+                    <button className="btn-primary" onClick={handleConfirmReport} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <CheckCircle size={14} /> 确认保存
+                    </button>
+                  </>
+                ) : (
+                  <button className="btn-primary" onClick={() => setShowReport(false)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    确认关闭
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

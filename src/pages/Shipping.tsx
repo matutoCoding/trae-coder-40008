@@ -13,12 +13,20 @@ export default function Shipping() {
   const [courier, setCourier] = useState('')
   const [trackingNo, setTrackingNo] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [showOrderDetail, setShowOrderDetail] = useState<string | null>(null)
-  const selectedOrder = orders.find(o => o.id === showOrderDetail)
-  const relatedShipment = shipments.find(s => s.orderId === showOrderDetail)
+  const [showOrderDetailShipmentId, setShowOrderDetailShipmentId] = useState<string | null>(null)
+  const selectedShipment = shipments.find(s => s.id === showOrderDetailShipmentId)
+  const selectedOrder = orders.find(o => o.id === selectedShipment?.orderId)
+  const allShipmentsForOrder = shipments.filter(s => s.orderId === selectedOrder?.id).sort((a, b) => new Date(b.shippedAt).getTime() - new Date(a.shippedAt).getTime())
+  const isLatestShipment = selectedShipment && allShipmentsForOrder[0]?.id === selectedShipment.id
 
   const handleSubmit = () => {
     if (!orderId || !inspected || !courier || !trackingNo) return
+    const existingShipments = shipments.filter(s => s.orderId === orderId)
+    if (existingShipments.length > 0) {
+      if (!confirm(`该订单已有 ${existingShipments.length} 条发货记录，确定要添加新的补发/重发记录吗？`)) {
+        return
+      }
+    }
     addShipment({ orderId, photos, courierCompany: courier, trackingNo, shippedAt: new Date().toISOString(), status: 'shipped' })
     setPhotos([]); setOrderId(''); setInspected(false); setCourier(''); setTrackingNo('')
   }
@@ -111,7 +119,7 @@ export default function Shipping() {
                 <button onClick={() => setExpandedId(expandedId===s.id ? null : s.id)} style={{ background:'none', border:'none', color:'#FF6B35', cursor:'pointer', fontSize:12, padding:0, display:'flex', alignItems:'center', gap:4 }}>
                   物流跟踪 {expandedId===s.id ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
                 </button>
-                <button onClick={() => setShowOrderDetail(s.orderId)} style={{ background:'none', border:'none', color:'#4A90D9', cursor:'pointer', fontSize:12, padding:0, display:'flex', alignItems:'center', gap:4 }}>
+                <button onClick={() => setShowOrderDetailShipmentId(s.id)} style={{ background:'none', border:'none', color:'#4A90D9', cursor:'pointer', fontSize:12, padding:0, display:'flex', alignItems:'center', gap:4 }}>
                   <FileText size={12} /> 查看订单
                 </button>
               </div>
@@ -129,9 +137,9 @@ export default function Shipping() {
       </div>
 
       {/* 订单详情模态框 */}
-      {showOrderDetail && selectedOrder && (
+      {selectedShipment && selectedOrder && (
         <div
-          onClick={() => setShowOrderDetail(null)}
+          onClick={() => setShowOrderDetailShipmentId(null)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}
           className="animate-fade-in"
         >
@@ -144,8 +152,13 @@ export default function Shipping() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <Package size={20} style={{ color: '#FF6B35' }} />
                 <h2 className="font-display" style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>订单详情</h2>
+                {isLatestShipment ? (
+                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: 'rgba(34,197,94,0.2)', color: '#22c55e', fontWeight: 600 }}>最新发货</span>
+                ) : (
+                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: 'rgba(156,163,175,0.2)', color: '#9CA3AF', fontWeight: 600 }}>历史发货</span>
+                )}
               </div>
-              <button onClick={() => setShowOrderDetail(null)} style={{ background: 'transparent', border: 'none', color: '#999', cursor: 'pointer', padding: 4 }}>
+              <button onClick={() => setShowOrderDetailShipmentId(null)} style={{ background: 'transparent', border: 'none', color: '#999', cursor: 'pointer', padding: 4 }}>
                 <X size={18} />
               </button>
             </div>
@@ -176,18 +189,58 @@ export default function Shipping() {
                 </div>
               </div>
 
-              {/* 发货信息 */}
-              {relatedShipment && (
+              {/* 当前发货信息 */}
+              <div style={{ marginBottom: 20 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 600, color: '#FF6B35', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 3, height: 14, background: '#FF6B35', borderRadius: 2 }}></span>
+                  {isLatestShipment ? '当前发货' : '本次发货'}
+                </h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 20px', background: isLatestShipment ? 'rgba(34,197,94,0.05)' : '#16181D', padding: 14, borderRadius: 8, border: `1px solid ${isLatestShipment ? 'rgba(34,197,94,0.2)' : 'var(--border-color)'}` }}>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>快递公司：</span><b style={{ color: '#e5e7eb' }}>{selectedShipment.courierCompany}</b></div>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>快递单号：</span><b style={{ color: '#4A90D9' }}>{selectedShipment.trackingNo}</b></div>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>发货时间：</span><b style={{ color: isLatestShipment ? '#22c55e' : '#e5e7eb' }}>{new Date(selectedShipment.shippedAt).toLocaleString('zh-CN')}</b></div>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>发货状态：</span><b style={{ color: statusColor(selectedShipment.status) }}>{statusLabel(selectedShipment.status)}</b></div>
+                </div>
+              </div>
+
+              {/* 历史发货记录 */}
+              {allShipmentsForOrder.length > 1 && (
                 <div style={{ marginBottom: 20 }}>
                   <h3 style={{ fontSize: 14, fontWeight: 600, color: '#FF6B35', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ width: 3, height: 14, background: '#FF6B35', borderRadius: 2 }}></span>
-                    发货信息
+                    历史发货记录 ({allShipmentsForOrder.length} 条)
                   </h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 20px', background: 'rgba(34,197,94,0.05)', padding: 14, borderRadius: 8, border: '1px solid rgba(34,197,94,0.2)' }}>
-                    <div><span style={{ color: '#666', fontSize: 12 }}>快递公司：</span><b style={{ color: '#e5e7eb' }}>{relatedShipment.courierCompany}</b></div>
-                    <div><span style={{ color: '#666', fontSize: 12 }}>快递单号：</span><b style={{ color: '#4A90D9' }}>{relatedShipment.trackingNo}</b></div>
-                    <div><span style={{ color: '#666', fontSize: 12 }}>发货时间：</span><b style={{ color: '#22c55e' }}>{new Date(relatedShipment.shippedAt).toLocaleString('zh-CN')}</b></div>
-                    <div><span style={{ color: '#666', fontSize: 12 }}>发货状态：</span><b style={{ color: statusColor(relatedShipment.status) }}>{statusLabel(relatedShipment.status)}</b></div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {allShipmentsForOrder.map((sh, idx) => {
+                      const isCurrent = sh.id === selectedShipment.id
+                      const isLatest = idx === 0
+                      return (
+                        <div
+                          key={sh.id}
+                          onClick={() => setShowOrderDetailShipmentId(sh.id)}
+                          style={{
+                            padding: '10px 12px',
+                            borderRadius: 6,
+                            background: isCurrent ? 'rgba(74,144,217,0.1)' : '#16181D',
+                            border: `1px solid ${isCurrent ? 'rgba(74,144,217,0.4)' : 'var(--border-color)'}`,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            fontSize: 12,
+                            transition: 'all 0.15s',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Truck size={12} style={{ color: isCurrent ? '#4A90D9' : '#666' }} />
+                            <span style={{ color: isCurrent ? '#4A90D9' : '#e5e7eb', fontWeight: isCurrent ? 600 : 400 }}>{sh.courierCompany} · {sh.trackingNo}</span>
+                            {isLatest && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 6, background: 'rgba(34,197,94,0.2)', color: '#22c55e' }}>最新</span>}
+                            {isCurrent && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 6, background: 'rgba(74,144,217,0.2)', color: '#4A90D9' }}>当前</span>}
+                          </div>
+                          <span style={{ color: '#666' }}>{new Date(sh.shippedAt).toLocaleDateString('zh-CN')}</span>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )}
@@ -202,7 +255,7 @@ export default function Shipping() {
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '14px 20px', borderTop: '1px solid var(--border-color)' }}>
-              <button className="btn-secondary" onClick={() => setShowOrderDetail(null)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button className="btn-secondary" onClick={() => setShowOrderDetailShipmentId(null)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 关闭
               </button>
             </div>

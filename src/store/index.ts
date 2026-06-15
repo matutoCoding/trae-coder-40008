@@ -222,6 +222,8 @@ interface AppState extends StoredState {
   updateOrder: (id: string, updates: Partial<Order>) => void
   addInspection: (inspection: Omit<ModelInspection, 'id'>) => string
   createInspectionForOrder: (orderId: string) => string
+  confirmInspection: (inspectionId: string) => void
+  rejectInspection: (inspectionId: string) => void
   updateMaterialStock: (id: string, quantity: number) => void
   addMaterialTask: (task: Omit<MaterialTask, 'id'>) => void
   updateMaterialTaskStatus: (id: string, status: MaterialTask['status'], operator?: string) => void
@@ -340,6 +342,59 @@ export const useStore = create<AppState>((set, get) => ({
     return id
   },
 
+  confirmInspection: (inspectionId) => {
+    set((state) => {
+      const inspection = state.inspections.find(i => i.id === inspectionId)
+      if (!inspection) return state
+      const order = state.orders.find(o => o.id === inspection.orderId)
+      if (!order) return state
+      let nextOrders = state.orders
+      let nextMaterialTasks = state.materialTasks
+      if (inspection.isPassed) {
+        nextOrders = state.orders.map(o =>
+          o.id === inspection.orderId ? { ...o, status: 'preparing' as const } : o
+        )
+        const existingTask = state.materialTasks.find(t => t.orderId === inspection.orderId)
+        if (!existingTask) {
+          const stockItem = state.materialStock.find(m => m.powderType.includes(order.material))
+          const requiredQty = order.quantity * 2
+          nextMaterialTasks = [...state.materialTasks, {
+            id: generateId(),
+            orderId: inspection.orderId,
+            materialId: stockItem?.id ?? '',
+            powderType: stockItem?.powderType ?? order.material,
+            requiredQty,
+            status: 'pending' as const,
+            operator: '',
+          }]
+        }
+      }
+      const next = {
+        ...state,
+        orders: nextOrders,
+        materialTasks: nextMaterialTasks,
+      }
+      saveToStorage(next)
+      return next
+    })
+  },
+
+  rejectInspection: (inspectionId) => {
+    set((state) => {
+      const inspection = state.inspections.find(i => i.id === inspectionId)
+      if (!inspection) return state
+      const next = {
+        ...state,
+        orders: state.orders.map(o =>
+          o.id === inspection.orderId ? { ...o, status: 'pending' as const } : o
+        ),
+        inspections: state.inspections.filter(i => i.id !== inspectionId),
+      }
+      saveToStorage(next)
+      return next
+    })
+  },
+
   updateMaterialStock: (id, quantity) => {
     set((state) => {
       const next = {
@@ -398,9 +453,13 @@ export const useStore = create<AppState>((set, get) => ({
       const orders = orderStatus
         ? state.orders.map(o => o.id === job.orderId ? { ...o, status: orderStatus } : o)
         : state.orders
+      const finalUpdates = { ...updates }
+      if (newStatus === 'completed') {
+        finalUpdates.currentLayer = job.totalLayers
+      }
       const next = {
         ...state,
-        printJobs: state.printJobs.map(j => j.id === id ? { ...j, ...updates } : j),
+        printJobs: state.printJobs.map(j => j.id === id ? { ...j, ...finalUpdates } : j),
         orders,
       }
       saveToStorage(next)
