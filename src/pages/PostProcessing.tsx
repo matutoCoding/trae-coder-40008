@@ -114,10 +114,9 @@ export default function PostProcessing() {
       alert('请先选择关联订单')
       return
     }
-    addPostProcess({ ...form, dimensions: dims })
+    const newId = addPostProcess({ ...form, dimensions: dims })
     setIsNew(false)
-    const newestId = postProcesses[postProcesses.length - 1]?.id
-    if (newestId) setSelId(newestId)
+    setSelId(newId)
   }
 
   const selectExisting = (id: string) => {

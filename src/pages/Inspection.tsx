@@ -15,11 +15,22 @@ const defectLabel: Record<string, string> = {
 }
 
 export default function Inspection() {
-  const { inspections, orders } = useStore()
+  const { inspections, orders, createInspectionForOrder } = useStore()
   const [selectedOrderId, setSelectedOrderId] = useState(orders[1]?.id ?? '')
   const [showReport, setShowReport] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
   const inspection = inspections.find(i => i.orderId === selectedOrderId)
   const order = orders.find(o => o.id === selectedOrderId)
+
+  const handleGenerateInspection = () => {
+    if (!selectedOrderId || inspection) return
+    setIsGenerating(true)
+    setTimeout(() => {
+      createInspectionForOrder(selectedOrderId)
+      setIsGenerating(false)
+      setShowReport(true)
+    }, 800)
+  }
 
   const handlePrintReport = () => {
     window.print()
@@ -116,7 +127,20 @@ export default function Inspection() {
             )}
           </div>
           {!inspection ? (
-            <div style={{ color: '#64748b', fontSize: 13, textAlign: 'center', padding: 40 }}>暂无检查数据</div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '40px 20px' }}>
+              <FileCheck size={40} style={{ color: '#475569', opacity: 0.5 }} />
+              <div style={{ color: '#64748b', fontSize: 13, textAlign: 'center' }}>该订单暂无检查记录</div>
+              <button
+                className="btn-primary"
+                onClick={handleGenerateInspection}
+                disabled={isGenerating}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 20px', fontSize: 13, marginTop: 8, opacity: isGenerating ? 0.6 : 1 }}
+              >
+                <RotateCw size={14} style={{ animation: isGenerating ? 'spin 1s linear infinite' : 'none' }} />
+                {isGenerating ? '检查中...' : '发起模型检查'}
+              </button>
+              <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {inspection.defects.map((d, i) => (
@@ -141,14 +165,25 @@ export default function Inspection() {
           <span>检查时间: <b style={{ color: '#e5e7eb' }}>{inspection?.inspectedAt ?? '-'}</b></span>
           <span>订单: <b style={{ color: '#e5e7eb' }}>{order?.modelFile ?? '-'}</b></span>
         </div>
-        <button
-          className="btn-primary"
-          onClick={() => setShowReport(true)}
-          disabled={!inspection}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px', fontSize: 13, opacity: inspection ? 1 : 0.5 }}
-        >
-          <FileCheck size={15} /> 生成检查报告
-        </button>
+        {inspection ? (
+          <button
+            className="btn-primary"
+            onClick={() => setShowReport(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px', fontSize: 13 }}
+          >
+            <FileCheck size={15} /> 查看检查报告
+          </button>
+        ) : (
+          <button
+            className="btn-primary"
+            onClick={handleGenerateInspection}
+            disabled={isGenerating}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px', fontSize: 13, opacity: isGenerating ? 0.6 : 1 }}
+          >
+            <RotateCw size={15} style={{ animation: isGenerating ? 'spin 1s linear infinite' : 'none' }} />
+            {isGenerating ? '检查中...' : '发起模型检查'}
+          </button>
+        )}
       </div>
 
       {/* 报告模态框 */}

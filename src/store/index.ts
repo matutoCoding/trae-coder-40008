@@ -220,7 +220,8 @@ interface AppState extends StoredState {
   addOrder: (order: Omit<Order, 'id' | 'createdAt' | 'status'>) => string
   updateOrderStatus: (id: string, status: Order['status']) => void
   updateOrder: (id: string, updates: Partial<Order>) => void
-  addInspection: (inspection: Omit<ModelInspection, 'id'>) => void
+  addInspection: (inspection: Omit<ModelInspection, 'id'>) => string
+  createInspectionForOrder: (orderId: string) => string
   updateMaterialStock: (id: string, quantity: number) => void
   addMaterialTask: (task: Omit<MaterialTask, 'id'>) => void
   updateMaterialTaskStatus: (id: string, status: MaterialTask['status'], operator?: string) => void
@@ -229,7 +230,7 @@ interface AppState extends StoredState {
   addPrintMonitorRecord: (record: Omit<PrintMonitorRecord, 'id'>) => void
   addSupportRemoval: (removal: Omit<SupportRemoval, 'id'>) => void
   updateSupportRemoval: (id: string, updates: Partial<SupportRemoval>) => void
-  addPostProcess: (process: Omit<PostProcess, 'id'>) => void
+  addPostProcess: (process: Omit<PostProcess, 'id'>) => string
   updatePostProcess: (id: string, updates: Partial<PostProcess>) => void
   addShipment: (shipment: Omit<Shipment, 'id'>) => void
   updateShipment: (id: string, updates: Partial<Shipment>) => void
@@ -286,14 +287,57 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   addInspection: (inspection) => {
+    const id = generateId()
     set((state) => {
       const next = {
         ...state,
-        inspections: [...state.inspections, { ...inspection, id: generateId() }]
+        inspections: [...state.inspections, { ...inspection, id }]
       }
       saveToStorage(next)
       return next
     })
+    return id
+  },
+
+  createInspectionForOrder: (orderId) => {
+    const id = generateId()
+    const now = new Date()
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    const inspectors = ['刘工', '陈工', '王工', '张工', '李工']
+    const inspector = inspectors[Math.floor(Math.random() * inspectors.length)]
+    const defectTemplates = [
+      { type: 'non-manifold' as const, severity: 'critical' as const, description: '模型存在非流形边，需要修复', count: 1 + Math.floor(Math.random() * 3) },
+      { type: 'normal-flip' as const, severity: 'info' as const, description: '部分面法线方向不一致，已自动修正', count: 2 + Math.floor(Math.random() * 5) },
+      { type: 'thin-wall' as const, severity: 'warning' as const, description: '局部区域壁厚偏薄，建议加厚', count: 1 + Math.floor(Math.random() * 2) },
+      { type: 'overlap' as const, severity: 'info' as const, description: '存在重叠面，已自动合并', count: 1 + Math.floor(Math.random() * 4) },
+    ]
+    const defectCount = 1 + Math.floor(Math.random() * 3)
+    const shuffled = [...defectTemplates].sort(() => Math.random() - 0.5)
+    const defects = shuffled.slice(0, defectCount)
+    const totalDefectCount = defects.reduce((sum, d) => sum + d.count, 0)
+    const isPassed = !defects.some(d => d.severity === 'critical') && totalDefectCount <= 8
+    set((state) => {
+      const next = {
+        ...state,
+        inspections: [...state.inspections, {
+          id,
+          orderId,
+          isPassed,
+          defectCount: totalDefectCount,
+          defects,
+          inspectedAt: dateStr,
+          inspector,
+        }],
+        orders: state.orders.map(o =>
+          o.id === orderId
+            ? { ...o, status: isPassed ? 'preparing' as const : 'inspecting' as const }
+            : o
+        ),
+      }
+      saveToStorage(next)
+      return next
+    })
+    return id
   },
 
   updateMaterialStock: (id, quantity) => {
@@ -406,14 +450,16 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   addPostProcess: (process) => {
+    const id = generateId()
     set((state) => {
       const next = {
         ...state,
-        postProcesses: [...state.postProcesses, { ...process, id: generateId() }]
+        postProcesses: [...state.postProcesses, { ...process, id }]
       }
       saveToStorage(next)
       return next
     })
+    return id
   },
 
   updatePostProcess: (id, updates) => {

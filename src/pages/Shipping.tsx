@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useStore } from '@/store'
-import { Camera, Package, Truck, Check, X, ChevronDown, ChevronUp, ScanLine } from 'lucide-react'
+import { useStore, statusLabels, statusColors } from '@/store'
+import { Camera, Package, Truck, Check, X, ChevronDown, ChevronUp, ScanLine, FileText, ExternalLink } from 'lucide-react'
 
 const COURIERS = ['顺丰速运', '中通快递', '圆通速递', '京东物流', '德邦物流']
 const SAMPLE_PHOTOS = ['/photos/sample1.jpg', '/photos/sample2.jpg', '/photos/sample3.jpg']
@@ -13,6 +13,9 @@ export default function Shipping() {
   const [courier, setCourier] = useState('')
   const [trackingNo, setTrackingNo] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [showOrderDetail, setShowOrderDetail] = useState<string | null>(null)
+  const selectedOrder = orders.find(o => o.id === showOrderDetail)
+  const relatedShipment = shipments.find(s => s.orderId === showOrderDetail)
 
   const handleSubmit = () => {
     if (!orderId || !inspected || !courier || !trackingNo) return
@@ -93,17 +96,25 @@ export default function Shipping() {
         {/* 右侧：发货记录 */}
         <div className="card" style={{ maxHeight:'calc(100vh - 120px)', overflowY:'auto' }}>
           <h3 style={{ marginBottom: 12 }}>发货记录</h3>
-          {shipments.map(s => (
+          {shipments.map(s => {
+            const order = orders.find(o => o.id === s.orderId)
+            return (
             <div key={s.id} style={{ background:'#1a1a1a', borderRadius:8, padding:12, marginBottom:10 }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
                 <span style={{ fontWeight:600 }}>{s.orderId}</span>
                 <span style={{ fontSize:12, padding:'2px 8px', borderRadius:10, background:statusColor(s.status)+'22', color:statusColor(s.status) }}>{statusLabel(s.status)}</span>
               </div>
+              {order && <div style={{ fontSize:12, color:'#666', marginTop:4 }}>{order.customerName} · {order.modelFile}</div>}
               <div style={{ fontSize:13, color:'#aaa', marginTop:6 }}><Truck size={12} /> {s.courierCompany} · {s.trackingNo}</div>
               <div style={{ fontSize:12, color:'#666', marginTop:4 }}>{new Date(s.shippedAt).toLocaleDateString('zh-CN')}</div>
-              <button onClick={() => setExpandedId(expandedId===s.id ? null : s.id)} style={{ background:'none', border:'none', color:'#FF6B35', cursor:'pointer', fontSize:12, marginTop:6, padding:0, display:'flex', alignItems:'center', gap:4 }}>
-                物流跟踪 {expandedId===s.id ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
-              </button>
+              <div style={{ display:'flex', gap:12, marginTop:8 }}>
+                <button onClick={() => setExpandedId(expandedId===s.id ? null : s.id)} style={{ background:'none', border:'none', color:'#FF6B35', cursor:'pointer', fontSize:12, padding:0, display:'flex', alignItems:'center', gap:4 }}>
+                  物流跟踪 {expandedId===s.id ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
+                </button>
+                <button onClick={() => setShowOrderDetail(s.orderId)} style={{ background:'none', border:'none', color:'#4A90D9', cursor:'pointer', fontSize:12, padding:0, display:'flex', alignItems:'center', gap:4 }}>
+                  <FileText size={12} /> 查看订单
+                </button>
+              </div>
               {expandedId===s.id && (
                 <div style={{ marginTop:8, paddingLeft:12, borderLeft:'2px solid #FF6B35' }}>
                   <div style={{ fontSize:12, color:'#999', marginBottom:4 }}><Check size={10} style={{color:'#10B981'}} /> 已揽收 - {new Date(s.shippedAt).toLocaleDateString('zh-CN')}</div>
@@ -112,10 +123,92 @@ export default function Shipping() {
                 </div>
               )}
             </div>
-          ))}
+          )})}
           {shipments.length===0 && <div style={{ textAlign:'center', color:'#555', padding:20 }}>暂无发货记录</div>}
         </div>
       </div>
+
+      {/* 订单详情模态框 */}
+      {showOrderDetail && selectedOrder && (
+        <div
+          onClick={() => setShowOrderDetail(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}
+          className="animate-fade-in"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="card animate-slide-up"
+            style={{ maxWidth: 600, width: '100%', maxHeight: '85vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border-color)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Package size={20} style={{ color: '#FF6B35' }} />
+                <h2 className="font-display" style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>订单详情</h2>
+              </div>
+              <button onClick={() => setShowOrderDetail(null)} style={{ background: 'transparent', border: 'none', color: '#999', cursor: 'pointer', padding: 4 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: 20, overflowY: 'auto', flex: 1 }}>
+              {/* 订单基本信息 */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 600, color: '#FF6B35', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 3, height: 14, background: '#FF6B35', borderRadius: 2 }}></span>
+                    订单信息
+                  </h3>
+                  <span className={`status-badge ${statusColors[selectedOrder.status]}`} style={{ fontSize: 12, padding: '2px 10px', borderRadius: 10, fontWeight: 600 }}>
+                    {statusLabels[selectedOrder.status]}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 20px', background: '#16181D', padding: 14, borderRadius: 8 }}>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>订单编号：</span><b style={{ color: '#4A90D9', fontFamily: 'Rajdhani, sans-serif' }}>{selectedOrder.id}</b></div>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>模型文件：</span><b style={{ color: '#e5e7eb' }}>{selectedOrder.modelFile}</b></div>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>客户名称：</span><b style={{ color: '#e5e7eb' }}>{selectedOrder.customerName}</b></div>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>所属公司：</span><b style={{ color: '#e5e7eb' }}>{selectedOrder.company}</b></div>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>打印材料：</span><b style={{ color: '#C0A062' }}>{selectedOrder.material}</b></div>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>打印工艺：</span><b style={{ color: '#e5e7eb' }}>{selectedOrder.process}</b></div>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>数量：</span><b style={{ color: '#e5e7eb' }}>{selectedOrder.quantity} 件</b></div>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>表面要求：</span><b style={{ color: '#e5e7eb' }}>{selectedOrder.surfaceFinish}</b></div>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>下单时间：</span><b style={{ color: '#e5e7eb' }}>{selectedOrder.createdAt}</b></div>
+                  <div><span style={{ color: '#666', fontSize: 12 }}>交付日期：</span><b style={{ color: '#e5e7eb' }}>{selectedOrder.deliveryDate}</b></div>
+                </div>
+              </div>
+
+              {/* 发货信息 */}
+              {relatedShipment && (
+                <div style={{ marginBottom: 20 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 600, color: '#FF6B35', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 3, height: 14, background: '#FF6B35', borderRadius: 2 }}></span>
+                    发货信息
+                  </h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 20px', background: 'rgba(34,197,94,0.05)', padding: 14, borderRadius: 8, border: '1px solid rgba(34,197,94,0.2)' }}>
+                    <div><span style={{ color: '#666', fontSize: 12 }}>快递公司：</span><b style={{ color: '#e5e7eb' }}>{relatedShipment.courierCompany}</b></div>
+                    <div><span style={{ color: '#666', fontSize: 12 }}>快递单号：</span><b style={{ color: '#4A90D9' }}>{relatedShipment.trackingNo}</b></div>
+                    <div><span style={{ color: '#666', fontSize: 12 }}>发货时间：</span><b style={{ color: '#22c55e' }}>{new Date(relatedShipment.shippedAt).toLocaleString('zh-CN')}</b></div>
+                    <div><span style={{ color: '#666', fontSize: 12 }}>发货状态：</span><b style={{ color: statusColor(relatedShipment.status) }}>{statusLabel(relatedShipment.status)}</b></div>
+                  </div>
+                </div>
+              )}
+
+              {/* 订单金额 */}
+              <div style={{ background: 'linear-gradient(135deg, rgba(255,107,53,0.1), rgba(255,107,53,0.05))', padding: 16, borderRadius: 8, border: '1px solid rgba(255,107,53,0.2)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: '#999', fontSize: 13 }}>订单金额</span>
+                  <span className="font-display" style={{ fontSize: 24, fontWeight: 700, color: '#FF6B35' }}>¥{selectedOrder.quotePrice.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '14px 20px', borderTop: '1px solid var(--border-color)' }}>
+              <button className="btn-secondary" onClick={() => setShowOrderDetail(null)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
