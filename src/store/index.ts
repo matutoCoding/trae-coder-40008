@@ -17,6 +17,13 @@ export interface Order {
   shippedAt?: string
 }
 
+export interface DefectItem {
+  type: 'non-manifold' | 'normal-flip' | 'thin-wall' | 'overlap'
+  severity: 'critical' | 'warning' | 'info'
+  description: string
+  count: number
+}
+
 export interface ModelInspection {
   id: string
   orderId: string
@@ -25,13 +32,9 @@ export interface ModelInspection {
   defects: DefectItem[]
   inspectedAt: string
   inspector: string
-}
-
-export interface DefectItem {
-  type: 'non-manifold' | 'normal-flip' | 'thin-wall' | 'overlap'
-  severity: 'critical' | 'warning' | 'info'
-  description: string
-  count: number
+  status: 'draft' | 'confirmed'
+  rejectReason?: string
+  rejectNote?: string
 }
 
 export interface MaterialStock {
@@ -67,6 +70,8 @@ export interface PrintJob {
   startedAt: string
   chamberTemp: number
   oxygenLevel: number
+  isRework?: boolean
+  reworkSourcePostProcessId?: string
 }
 
 export interface PrintMonitorRecord {
@@ -88,6 +93,16 @@ export interface SupportRemoval {
   operator: string
   startedAt: string
   completedAt: string
+  isRework?: boolean
+  reworkSourcePostProcessId?: string
+}
+
+export interface DimensionCheck {
+  name: string
+  targetValue: number
+  actualValue: number
+  tolerance: number
+  result: 'pass' | 'fail'
 }
 
 export interface PostProcess {
@@ -102,14 +117,10 @@ export interface PostProcess {
   qualityResult: 'pass' | 'rework' | 'scrap' | ''
   operator: string
   dimensions: DimensionCheck[]
-}
-
-export interface DimensionCheck {
-  name: string
-  targetValue: number
-  actualValue: number
-  tolerance: number
-  result: 'pass' | 'fail'
+  reworkAction?: 'reprint' | 'reprocess' | null
+  reworkNote?: string
+  isRework?: boolean
+  reworkSourcePostProcessId?: string
 }
 
 export interface Shipment {
@@ -120,9 +131,50 @@ export interface Shipment {
   trackingNo: string
   shippedAt: string
   status: 'pending' | 'shipped' | 'delivered'
+  shipmentType: 'normal' | 'reissue' | 'resend'
+  reason?: string
+  attachmentPhotos?: string[]
+  operator?: string
+}
+
+export type ProcessStage =
+  | 'order_created'
+  | 'inspection_confirmed'
+  | 'inspection_rejected'
+  | 'material_picked'
+  | 'print_completed'
+  | 'support_completed'
+  | 'postprocess_judged'
+  | 'rework_created'
+  | 'shipped'
+
+export interface ProcessLog {
+  id: string
+  orderId: string
+  stage: ProcessStage
+  stageLabel: string
+  operator: string
+  timestamp: string
+  note?: string
+  relatedId?: string
+}
+
+export interface ReworkTask {
+  id: string
+  orderId: string
+  sourcePostProcessId: string
+  reworkType: 'reprint' | 'reprocess'
+  status: 'pending' | 'in-progress' | 'completed'
+  note?: string
+  operator?: string
+  createdAt: string
+  relatedJobId?: string
 }
 
 const generateId = () => `MF${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 5).toUpperCase()}`
+
+const OPERATORS = ['刘工', '陈工', '王工', '张工', '李工', '赵师傅', '李师傅', '系统']
+const randomOperator = () => OPERATORS[Math.floor(Math.random() * (OPERATORS.length - 1))]
 
 const mockOrders: Order[] = [
   { id: 'MF20240001', customerName: '张明', phone: '138****5678', company: '航天精密制造有限公司', modelFile: 'turbine_blade.stl', material: 'Ti6Al4V', process: 'SLM', status: 'printing', quotePrice: 12800, createdAt: '2024-12-01', quantity: 5, surfaceFinish: 'Ra1.6', deliveryDate: '2024-12-15' },
@@ -154,8 +206,8 @@ const mockMaterialTasks: MaterialTask[] = [
 ]
 
 const mockInspections: ModelInspection[] = [
-  { id: 'INS001', orderId: 'MF20240001', isPassed: true, defectCount: 2, defects: [{ type: 'thin-wall', severity: 'warning', description: '叶片前缘壁厚0.3mm，建议加厚至0.5mm', count: 1 }, { type: 'normal-flip', severity: 'info', description: '底部平面法线方向不一致，已自动修正', count: 3 }], inspectedAt: '2024-12-04 14:20', inspector: '刘工' },
-  { id: 'INS002', orderId: 'MF20240002', isPassed: false, defectCount: 3, defects: [{ type: 'non-manifold', severity: 'critical', description: '髋臼杯内壁存在非流形边，需要修复', count: 2 }, { type: 'thin-wall', severity: 'warning', description: '多孔结构部分区域壁厚不足0.2mm', count: 5 }, { type: 'normal-flip', severity: 'info', description: '外表面3处法线翻转', count: 3 }], inspectedAt: '2024-12-05 09:15', inspector: '刘工' },
+  { id: 'INS001', orderId: 'MF20240001', isPassed: true, defectCount: 2, defects: [{ type: 'thin-wall', severity: 'warning', description: '叶片前缘壁厚0.3mm，建议加厚至0.5mm', count: 1 }, { type: 'normal-flip', severity: 'info', description: '底部平面法线方向不一致，已自动修正', count: 3 }], inspectedAt: '2024-12-04 14:20', inspector: '刘工', status: 'confirmed' },
+  { id: 'INS002', orderId: 'MF20240002', isPassed: false, defectCount: 3, defects: [{ type: 'non-manifold', severity: 'critical', description: '髋臼杯内壁存在非流形边，需要修复', count: 2 }, { type: 'thin-wall', severity: 'warning', description: '多孔结构部分区域壁厚不足0.2mm', count: 5 }, { type: 'normal-flip', severity: 'info', description: '外表面3处法线翻转', count: 3 }], inspectedAt: '2024-12-05 09:15', inspector: '刘工', status: 'confirmed' },
 ]
 
 const mockSupportRemovals: SupportRemoval[] = [
@@ -167,10 +219,33 @@ const mockPostProcesses: PostProcess[] = [
 ]
 
 const mockShipments: Shipment[] = [
-  { id: 'SH001', orderId: 'MF20240006', photos: ['photo_front.jpg', 'photo_side.jpg', 'photo_detail.jpg'], courierCompany: '顺丰速运', trackingNo: 'SF1234567890', shippedAt: '2024-12-08T16:30:00.000Z', status: 'shipped' },
+  { id: 'SH001', orderId: 'MF20240006', photos: ['photo_front.jpg', 'photo_side.jpg', 'photo_detail.jpg'], courierCompany: '顺丰速运', trackingNo: 'SF1234567890', shippedAt: '2024-12-08T16:30:00.000Z', status: 'shipped', shipmentType: 'normal', operator: '张工' },
 ]
 
-const STORAGE_KEY = 'metalforge-pro-data-v1'
+const now = new Date()
+const iso = (d: Date) => d.toISOString()
+const hoursAgo = (h: number) => iso(new Date(now.getTime() - h * 3600 * 1000))
+
+const mockProcessLogs: ProcessLog[] = [
+  { id: 'PL001', orderId: 'MF20240001', stage: 'order_created', stageLabel: '订单创建', operator: '系统', timestamp: hoursAgo(24 * 6), note: '客户在线下单' },
+  { id: 'PL002', orderId: 'MF20240001', stage: 'inspection_confirmed', stageLabel: '模型检查通过', operator: '刘工', timestamp: hoursAgo(24 * 5), note: '检查通过，进入备料', relatedId: 'INS001' },
+  { id: 'PL003', orderId: 'MF20240001', stage: 'material_picked', stageLabel: '材料领用完成', operator: '陈工', timestamp: hoursAgo(24 * 4.5), note: '领用5kg Ti6Al4V', relatedId: 'MT001' },
+  { id: 'PL004', orderId: 'MF20240001', stage: 'print_completed', stageLabel: '打印开始', operator: '王工', timestamp: hoursAgo(24 * 4), note: '开始打印作业', relatedId: 'PJ001' },
+  { id: 'PL005', orderId: 'MF20240002', stage: 'order_created', stageLabel: '订单创建', operator: '系统', timestamp: hoursAgo(24 * 4) },
+  { id: 'PL006', orderId: 'MF20240002', stage: 'inspection_confirmed', stageLabel: '模型检查未通过', operator: '刘工', timestamp: hoursAgo(24 * 3), note: '发现严重缺陷，待重新检查', relatedId: 'INS002' },
+  { id: 'PL007', orderId: 'MF20240003', stage: 'order_created', stageLabel: '订单创建', operator: '系统', timestamp: hoursAgo(24 * 2) },
+  { id: 'PL008', orderId: 'MF20240003', stage: 'material_picked', stageLabel: '材料分配完成', operator: '王工', timestamp: hoursAgo(24 * 1.5), relatedId: 'MT002' },
+  { id: 'PL009', orderId: 'MF20240004', stage: 'order_created', stageLabel: '订单创建', operator: '系统', timestamp: hoursAgo(24 * 5) },
+  { id: 'PL010', orderId: 'MF20240004', stage: 'support_completed', stageLabel: '打印完成进入支撑去除', operator: '赵师傅', timestamp: hoursAgo(24 * 2), relatedId: 'SR001' },
+  { id: 'PL011', orderId: 'MF20240005', stage: 'order_created', stageLabel: '订单创建', operator: '系统', timestamp: hoursAgo(24 * 9) },
+  { id: 'PL012', orderId: 'MF20240005', stage: 'postprocess_judged', stageLabel: '进入后处理工序', operator: '李师傅', timestamp: hoursAgo(24 * 8), relatedId: 'PP001' },
+  { id: 'PL013', orderId: 'MF20240006', stage: 'order_created', stageLabel: '订单创建', operator: '系统', timestamp: hoursAgo(24 * 10) },
+  { id: 'PL014', orderId: 'MF20240006', stage: 'shipped', stageLabel: '已发货', operator: '张工', timestamp: hoursAgo(24 * 1), relatedId: 'SH001' },
+]
+
+const mockReworkTasks: ReworkTask[] = []
+
+const STORAGE_KEY = 'metalforge-pro-data-v2'
 
 type StoredState = {
   orders: Order[]
@@ -182,6 +257,9 @@ type StoredState = {
   supportRemovals: SupportRemoval[]
   postProcesses: PostProcess[]
   shipments: Shipment[]
+  processLogs: ProcessLog[]
+  reworkTasks: ReworkTask[]
+  selectedOrderId: string | null
 }
 
 const initialMock: StoredState = {
@@ -194,6 +272,9 @@ const initialMock: StoredState = {
   supportRemovals: mockSupportRemovals,
   postProcesses: mockPostProcesses,
   shipments: mockShipments,
+  processLogs: mockProcessLogs,
+  reworkTasks: mockReworkTasks,
+  selectedOrderId: null,
 }
 
 const loadFromStorage = (): StoredState | null => {
@@ -216,24 +297,43 @@ const saveToStorage = (state: StoredState) => {
 
 const seedState = loadFromStorage() ?? initialMock
 
+const nowStr = () => new Date().toISOString()
+
+const appendLog = (state: StoredState, log: Omit<ProcessLog, 'id' | 'timestamp'>): ProcessLog[] => {
+  return [...state.processLogs, { ...log, id: generateId(), timestamp: nowStr() }]
+}
+
 interface AppState extends StoredState {
+  setSelectedOrderId: (id: string | null) => void
+  clearSelectedOrderId: () => void
+  getProcessLogsForOrder: (orderId: string) => ProcessLog[]
+  getLastLogForOrder: (orderId: string, stage: ProcessStage) => ProcessLog | undefined
+
   addOrder: (order: Omit<Order, 'id' | 'createdAt' | 'status'>) => string
   updateOrderStatus: (id: string, status: Order['status']) => void
   updateOrder: (id: string, updates: Partial<Order>) => void
+
   addInspection: (inspection: Omit<ModelInspection, 'id'>) => string
   createInspectionForOrder: (orderId: string) => string
-  confirmInspection: (inspectionId: string) => void
-  rejectInspection: (inspectionId: string) => void
+  confirmInspection: (inspectionId: string, rejectNote?: string) => void
+  rejectInspection: (inspectionId: string, rejectReason?: string) => void
+  getLatestInspectionForOrder: (orderId: string) => ModelInspection | undefined
+
   updateMaterialStock: (id: string, quantity: number) => void
   addMaterialTask: (task: Omit<MaterialTask, 'id'>) => void
   updateMaterialTaskStatus: (id: string, status: MaterialTask['status'], operator?: string) => void
+
   addPrintJob: (job: Omit<PrintJob, 'id' | 'currentLayer' | 'startedAt'>) => void
   updatePrintJob: (id: string, updates: Partial<PrintJob>) => void
   addPrintMonitorRecord: (record: Omit<PrintMonitorRecord, 'id'>) => void
+
   addSupportRemoval: (removal: Omit<SupportRemoval, 'id'>) => void
   updateSupportRemoval: (id: string, updates: Partial<SupportRemoval>) => void
+
   addPostProcess: (process: Omit<PostProcess, 'id'>) => string
   updatePostProcess: (id: string, updates: Partial<PostProcess>) => void
+  createReworkTask: (postProcessId: string, reworkType: 'reprint' | 'reprocess', note?: string) => string
+
   addShipment: (shipment: Omit<Shipment, 'id'>) => void
   updateShipment: (id: string, updates: Partial<Shipment>) => void
 }
@@ -250,18 +350,55 @@ const printStatusToOrderStatus = (printStatus: PrintJob['status']): Order['statu
   }
 }
 
+const STAGE_LABEL_MAP: Record<ProcessStage, string> = {
+  order_created: '订单创建',
+  inspection_confirmed: '模型检查确认',
+  inspection_rejected: '模型检查退回',
+  material_picked: '材料领用',
+  print_completed: '打印完成',
+  support_completed: '支撑去除完成',
+  postprocess_judged: '后处理判定',
+  rework_created: '返工任务创建',
+  shipped: '成品发货',
+}
+
 export const useStore = create<AppState>((set, get) => ({
   ...seedState,
+
+  setSelectedOrderId: (id) => set({ selectedOrderId: id }),
+  clearSelectedOrderId: () => set({ selectedOrderId: null }),
+
+  getProcessLogsForOrder: (orderId) => {
+    return get().processLogs
+      .filter(l => l.orderId === orderId)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+  },
+
+  getLastLogForOrder: (orderId, stage) => {
+    return get().processLogs
+      .filter(l => l.orderId === orderId && l.stage === stage)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]
+  },
+
+  getLatestInspectionForOrder: (orderId) => {
+    return get().inspections
+      .filter(i => i.orderId === orderId)
+      .sort((a, b) => new Date(b.inspectedAt).getTime() - new Date(a.inspectedAt).getTime())[0]
+  },
 
   addOrder: (order) => {
     const id = generateId()
     set((state) => {
-      const next = {
+      const nextState: StoredState = {
         ...state,
-        orders: [...state.orders, { ...order, id, createdAt: new Date().toISOString().split('T')[0], status: 'pending' as const }]
+        orders: [...state.orders, { ...order, id, createdAt: new Date().toISOString().split('T')[0], status: 'pending' as const }],
       }
-      saveToStorage(next)
-      return next
+      nextState.processLogs = appendLog(nextState, {
+        orderId: id, stage: 'order_created', stageLabel: STAGE_LABEL_MAP.order_created,
+        operator: '系统', note: '客户在线下单',
+      })
+      saveToStorage(nextState)
+      return nextState
     })
     return id
   },
@@ -319,37 +456,31 @@ export const useStore = create<AppState>((set, get) => ({
     const totalDefectCount = defects.reduce((sum, d) => sum + d.count, 0)
     const isPassed = !defects.some(d => d.severity === 'critical') && totalDefectCount <= 8
     set((state) => {
-      const next = {
+      const nextState: StoredState = {
         ...state,
         inspections: [...state.inspections, {
-          id,
-          orderId,
-          isPassed,
-          defectCount: totalDefectCount,
-          defects,
-          inspectedAt: dateStr,
-          inspector,
+          id, orderId, isPassed, defectCount: totalDefectCount, defects,
+          inspectedAt: dateStr, inspector, status: 'draft' as const,
         }],
         orders: state.orders.map(o =>
-          o.id === orderId
-            ? { ...o, status: isPassed ? 'preparing' as const : 'inspecting' as const }
-            : o
+          o.id === orderId ? { ...o, status: 'inspecting' as const } : o
         ),
       }
-      saveToStorage(next)
-      return next
+      saveToStorage(nextState)
+      return nextState
     })
     return id
   },
 
-  confirmInspection: (inspectionId) => {
+  confirmInspection: (inspectionId, rejectNote) => {
     set((state) => {
       const inspection = state.inspections.find(i => i.id === inspectionId)
-      if (!inspection) return state
+      if (!inspection || inspection.status !== 'draft') return state
       const order = state.orders.find(o => o.id === inspection.orderId)
       if (!order) return state
       let nextOrders = state.orders
       let nextMaterialTasks = state.materialTasks
+      const updatedInspection: ModelInspection = { ...inspection, status: 'confirmed' as const, rejectNote }
       if (inspection.isPassed) {
         nextOrders = state.orders.map(o =>
           o.id === inspection.orderId ? { ...o, status: 'preparing' as const } : o
@@ -368,30 +499,54 @@ export const useStore = create<AppState>((set, get) => ({
             operator: '',
           }]
         }
+      } else {
+        nextOrders = state.orders.map(o =>
+          o.id === inspection.orderId ? { ...o, status: 'inspecting' as const } : o
+        )
       }
-      const next = {
+      const nextState: StoredState = {
         ...state,
+        inspections: state.inspections.map(i => i.id === inspectionId ? updatedInspection : i),
         orders: nextOrders,
         materialTasks: nextMaterialTasks,
       }
-      saveToStorage(next)
-      return next
+      nextState.processLogs = appendLog(nextState, {
+        orderId: inspection.orderId,
+        stage: 'inspection_confirmed',
+        stageLabel: inspection.isPassed ? '模型检查通过' : '模型检查未通过',
+        operator: inspection.inspector,
+        note: inspection.isPassed
+          ? (rejectNote || '检查通过，进入备料工序')
+          : (rejectNote || '发现缺陷，需重新检查或退回修改'),
+        relatedId: inspectionId,
+      })
+      saveToStorage(nextState)
+      return nextState
     })
   },
 
-  rejectInspection: (inspectionId) => {
+  rejectInspection: (inspectionId, rejectReason = '模型需要修改') => {
     set((state) => {
       const inspection = state.inspections.find(i => i.id === inspectionId)
       if (!inspection) return state
-      const next = {
+      const updatedInspection: ModelInspection = { ...inspection, status: 'confirmed' as const, rejectReason }
+      const nextState: StoredState = {
         ...state,
+        inspections: state.inspections.map(i => i.id === inspectionId ? updatedInspection : i),
         orders: state.orders.map(o =>
           o.id === inspection.orderId ? { ...o, status: 'pending' as const } : o
         ),
-        inspections: state.inspections.filter(i => i.id !== inspectionId),
       }
-      saveToStorage(next)
-      return next
+      nextState.processLogs = appendLog(nextState, {
+        orderId: inspection.orderId,
+        stage: 'inspection_rejected',
+        stageLabel: STAGE_LABEL_MAP.inspection_rejected,
+        operator: inspection.inspector,
+        note: rejectReason,
+        relatedId: inspectionId,
+      })
+      saveToStorage(nextState)
+      return nextState
     })
   },
 
@@ -419,12 +574,27 @@ export const useStore = create<AppState>((set, get) => ({
 
   updateMaterialTaskStatus: (id, status, operator) => {
     set((state) => {
-      const next = {
+      const task = state.materialTasks.find(t => t.id === id)
+      if (!task) return state
+      const op = operator ?? randomOperator()
+      const nextState: StoredState = {
         ...state,
-        materialTasks: state.materialTasks.map(t => t.id === id ? { ...t, status, ...(operator ? { operator } : {}) } : t)
+        materialTasks: state.materialTasks.map(t =>
+          t.id === id ? { ...t, status, ...(operator ? { operator } : {}) } : t
+        ),
       }
-      saveToStorage(next)
-      return next
+      if (status === 'picked') {
+        nextState.processLogs = appendLog(nextState, {
+          orderId: task.orderId,
+          stage: 'material_picked',
+          stageLabel: STAGE_LABEL_MAP.material_picked,
+          operator: op,
+          note: `领用${task.requiredQty}${task.powderType.split(' ')[0]}材料`,
+          relatedId: id,
+        })
+      }
+      saveToStorage(nextState)
+      return nextState
     })
   },
 
@@ -432,15 +602,15 @@ export const useStore = create<AppState>((set, get) => ({
     set((state) => {
       const newJob = { ...job, id: generateId(), currentLayer: 0, startedAt: job.status === 'printing' ? new Date().toISOString() : '' }
       const orderStatus = printStatusToOrderStatus(job.status)
-      const next = {
+      const nextState: StoredState = {
         ...state,
         printJobs: [...state.printJobs, newJob],
         orders: orderStatus
           ? state.orders.map(o => o.id === job.orderId ? { ...o, status: orderStatus } : o)
           : state.orders
       }
-      saveToStorage(next)
-      return next
+      saveToStorage(nextState)
+      return nextState
     })
   },
 
@@ -457,13 +627,23 @@ export const useStore = create<AppState>((set, get) => ({
       if (newStatus === 'completed') {
         finalUpdates.currentLayer = job.totalLayers
       }
-      const next = {
+      const nextState: StoredState = {
         ...state,
         printJobs: state.printJobs.map(j => j.id === id ? { ...j, ...finalUpdates } : j),
         orders,
       }
-      saveToStorage(next)
-      return next
+      if (newStatus === 'completed' && job.status !== 'completed') {
+        nextState.processLogs = appendLog(nextState, {
+          orderId: job.orderId,
+          stage: 'print_completed',
+          stageLabel: STAGE_LABEL_MAP.print_completed,
+          operator: randomOperator(),
+          note: job.isRework ? '返工打印完成' : '打印作业完成，进入支撑去除工序',
+          relatedId: id,
+        })
+      }
+      saveToStorage(nextState)
+      return nextState
     })
   },
 
@@ -498,25 +678,35 @@ export const useStore = create<AppState>((set, get) => ({
       const orders = orderStatus
         ? state.orders.map(o => o.id === removal.orderId ? { ...o, status: orderStatus } : o)
         : state.orders
-      const next = {
+      const nextState: StoredState = {
         ...state,
         supportRemovals: state.supportRemovals.map(s => s.id === id ? { ...s, ...updates } : s),
         orders,
       }
-      saveToStorage(next)
-      return next
+      if (newStatus === 'completed' && removal.status !== 'completed') {
+        nextState.processLogs = appendLog(nextState, {
+          orderId: removal.orderId,
+          stage: 'support_completed',
+          stageLabel: STAGE_LABEL_MAP.support_completed,
+          operator: removal.operator || randomOperator(),
+          note: removal.isRework ? '返工支撑去除完成' : '支撑去除完成，进入后处理工序',
+          relatedId: id,
+        })
+      }
+      saveToStorage(nextState)
+      return nextState
     })
   },
 
   addPostProcess: (process) => {
     const id = generateId()
     set((state) => {
-      const next = {
+      const nextState: StoredState = {
         ...state,
-        postProcesses: [...state.postProcesses, { ...process, id }]
+        postProcesses: [...state.postProcesses, { ...process, id }],
       }
-      saveToStorage(next)
-      return next
+      saveToStorage(nextState)
+      return nextState
     })
     return id
   },
@@ -533,20 +723,113 @@ export const useStore = create<AppState>((set, get) => ({
       const orders = orderStatus
         ? state.orders.map(o => o.id === pp.orderId ? { ...o, status: orderStatus } : o)
         : state.orders
-      const next = {
+      const nextState: StoredState = {
         ...state,
         postProcesses: state.postProcesses.map(p => p.id === id ? { ...p, ...updates } : p),
         orders,
       }
-      saveToStorage(next)
-      return next
+      if (newResult && pp.qualityResult !== newResult) {
+        const resultNote = newResult === 'pass' ? '后处理判定合格，进入发货准备'
+          : newResult === 'rework' ? '后处理判定返工'
+          : '后处理判定报废'
+        nextState.processLogs = appendLog(nextState, {
+          orderId: pp.orderId,
+          stage: 'postprocess_judged',
+          stageLabel: STAGE_LABEL_MAP.postprocess_judged,
+          operator: pp.operator || randomOperator(),
+          note: `${resultNote}${updates.reworkNote ? ` - ${updates.reworkNote}` : ''}`,
+          relatedId: id,
+        })
+      }
+      saveToStorage(nextState)
+      return nextState
     })
+  },
+
+  createReworkTask: (postProcessId, reworkType, note) => {
+    const id = generateId()
+    set((state) => {
+      const pp = state.postProcesses.find(p => p.id === postProcessId)
+      if (!pp) return state
+      const operator = pp.operator || randomOperator()
+      const reworkTask: ReworkTask = {
+        id,
+        orderId: pp.orderId,
+        sourcePostProcessId: postProcessId,
+        reworkType,
+        status: 'pending',
+        note,
+        operator,
+        createdAt: nowStr(),
+      }
+      let nextPrintJobs = state.printJobs
+      let nextSupportRemovals = state.supportRemovals
+      let nextPostProcesses = state.postProcesses.map(p =>
+        p.id === postProcessId ? { ...p, reworkAction: reworkType, reworkNote: note } : p
+      )
+      const order = state.orders.find(o => o.id === pp.orderId)
+      if (reworkType === 'reprint' && order) {
+        const stockItem = state.materialStock.find(m => m.powderType.includes(order.material))
+        nextPrintJobs = [...state.printJobs, {
+          id: generateId(),
+          orderId: pp.orderId,
+          laserPower: 280, scanSpeed: 1000, layerThickness: 30, scanStrategy: '条纹扫描',
+          status: 'queued', currentLayer: 0,
+          totalLayers: 1000 + Math.floor(Math.random() * 3000),
+          startedAt: '', chamberTemp: 25, oxygenLevel: 0.0,
+          isRework: true,
+          reworkSourcePostProcessId: postProcessId,
+        }]
+      } else if (reworkType === 'reprocess') {
+        nextPostProcesses = [...nextPostProcesses, {
+          id: generateId(),
+          orderId: pp.orderId,
+          sandblastPressure: pp.sandblastPressure,
+          sandblastMedia: pp.sandblastMedia,
+          sandblastDuration: pp.sandblastDuration,
+          polishingMethod: pp.polishingMethod,
+          targetRoughness: pp.targetRoughness,
+          actualRoughness: 0,
+          qualityResult: '',
+          operator: pp.operator,
+          dimensions: [],
+          isRework: true,
+          reworkSourcePostProcessId: postProcessId,
+        }]
+      }
+      const nextState: StoredState = {
+        ...state,
+        reworkTasks: [...state.reworkTasks, reworkTask],
+        printJobs: nextPrintJobs,
+        supportRemovals: nextSupportRemovals,
+        postProcesses: nextPostProcesses,
+        orders: state.orders.map(o =>
+          o.id === pp.orderId
+            ? { ...o, status: reworkType === 'reprint' ? 'printing' as const : 'processing' as const }
+            : o
+        ),
+      }
+      nextState.processLogs = appendLog(nextState, {
+        orderId: pp.orderId,
+        stage: 'rework_created',
+        stageLabel: STAGE_LABEL_MAP.rework_created,
+        operator,
+        note: reworkType === 'reprint'
+          ? `创建返工打印任务${note ? `：${note}` : ''}`
+          : `创建返工后处理任务${note ? `：${note}` : ''}`,
+        relatedId: id,
+      })
+      saveToStorage(nextState)
+      return nextState
+    })
+    return id
   },
 
   addShipment: (shipment) => {
     set((state) => {
       const shippedAt = shipment.shippedAt
-      const next = {
+      const op = shipment.operator || randomOperator()
+      const nextState: StoredState = {
         ...state,
         shipments: [...state.shipments, { ...shipment, id: generateId() }],
         orders: state.orders.map(o =>
@@ -555,8 +838,19 @@ export const useStore = create<AppState>((set, get) => ({
             : o
         ),
       }
-      saveToStorage(next)
-      return next
+      nextState.processLogs = appendLog(nextState, {
+        orderId: shipment.orderId,
+        stage: 'shipped',
+        stageLabel: STAGE_LABEL_MAP.shipped,
+        operator: op,
+        note: shipment.shipmentType === 'normal'
+          ? `正常发货：${shipment.courierCompany} ${shipment.trackingNo}`
+          : shipment.shipmentType === 'reissue'
+            ? `补发${shipment.reason ? `（${shipment.reason}）` : ''}：${shipment.courierCompany} ${shipment.trackingNo}`
+            : `重发${shipment.reason ? `（${shipment.reason}）` : ''}：${shipment.courierCompany} ${shipment.trackingNo}`,
+      })
+      saveToStorage(nextState)
+      return nextState
     })
   },
 
@@ -592,4 +886,16 @@ export const statusColors: Record<Order['status'], string> = {
   processing: 'bg-cyan-500/20 text-cyan-400',
   shipping: 'bg-indigo-500/20 text-indigo-400',
   completed: 'bg-green-500/20 text-green-400',
+}
+
+export const shipmentTypeLabels: Record<Shipment['shipmentType'], string> = {
+  normal: '正常发货',
+  reissue: '补发',
+  resend: '重发',
+}
+
+export const shipmentTypeColors: Record<Shipment['shipmentType'], string> = {
+  normal: 'bg-green-500/20 text-green-400',
+  reissue: 'bg-yellow-500/20 text-yellow-400',
+  resend: 'bg-orange-500/20 text-orange-400',
 }

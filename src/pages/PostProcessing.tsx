@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useStore } from '@/store'
-import { Wind, Sparkles, Gauge, Plus, CheckCircle, AlertTriangle, XCircle, ChevronDown } from 'lucide-react'
+import { Wind, Sparkles, Gauge, Plus, CheckCircle, AlertTriangle, XCircle, ChevronDown, RotateCcw, Printer, ArrowRight } from 'lucide-react'
 import type { DimensionCheck, PostProcess } from '@/store'
 
 const mediaOptions = ['Al2O3 80#', 'Al2O3 120#', 'Al2O3 220#', 'SiC', '玻璃微珠']
@@ -52,13 +53,41 @@ const inputStyle: React.CSSProperties = { background: '#0f172a', border: '1px so
 const labelStyle: React.CSSProperties = { fontSize: 12, color: '#94a3b8', marginBottom: 4 }
 
 export default function PostProcessing() {
-  const { postProcesses, orders, addPostProcess, updatePostProcess } = useStore()
+  const navigate = useNavigate()
+  const {
+    postProcesses, orders, printJobs, reworkTasks,
+    addPostProcess, updatePostProcess, createReworkTask,
+    selectedOrderId, setSelectedOrderId, clearSelectedOrderId
+  } = useStore()
+
   const [selId, setSelId] = useState(postProcesses[0]?.id ?? '')
+  const [selOrderId, setSelOrderId] = useState('')
   const pp = postProcesses.find(p => p.id === selId)
+  const order = orders.find(o => o.id === (pp?.orderId || selOrderId))
 
   const [form, setForm] = useState<Omit<PostProcess, 'id'>>(() => (pp ? { ...pp, dimensions: [] } : { ...EMPTY_FORM }))
   const [dims, setDims] = useState<DimensionCheck[]>(() => pp?.dimensions ?? [])
   const [isNew, setIsNew] = useState(false)
+
+  const [reworkType, setReworkType] = useState<'reprint' | 'reprocess'>('reprocess')
+  const [reworkNote, setReworkNote] = useState('')
+
+  useEffect(() => {
+    if (selectedOrderId) {
+      const existingPP = postProcesses.find(p => p.orderId === selectedOrderId)
+      if (existingPP) {
+        setIsNew(false)
+        setSelId(existingPP.id)
+      } else {
+        setIsNew(true)
+        setSelId('')
+        setSelOrderId(selectedOrderId)
+        setForm({ ...EMPTY_FORM, orderId: selectedOrderId })
+        setDims([])
+      }
+      clearSelectedOrderId()
+    }
+  }, [])
 
   useEffect(() => {
     if (!isNew && pp) {
@@ -105,6 +134,7 @@ export default function PostProcessing() {
   const createNew = () => {
     setIsNew(true)
     setSelId('')
+    setSelOrderId('')
     setForm({ ...EMPTY_FORM })
     setDims([])
   }
@@ -123,6 +153,33 @@ export default function PostProcessing() {
     setIsNew(false)
     setSelId(id)
   }
+
+  const handleCreateRework = () => {
+    if (!pp) return
+    createReworkTask(pp.id, reworkType, reworkNote || undefined)
+    setReworkNote('')
+  }
+
+  const jumpToPrinting = () => {
+    if (order) {
+      setSelectedOrderId(order.id)
+      navigate('/printing')
+    }
+  }
+
+  const sourcePP = pp?.reworkSourcePostProcessId
+    ? postProcesses.find(p => p.id === pp.reworkSourcePostProcessId)
+    : null
+
+  const relatedReworkTask = pp
+    ? reworkTasks.find(r => r.sourcePostProcessId === pp.id || (pp.isRework && r.relatedJobId && printJobs.find(pj => pj.id === r.relatedJobId)?.reworkSourcePostProcessId === pp.reworkSourcePostProcessId))
+    : null
+
+  const relatedPrintJob = pp
+    ? printJobs.find(pj => pj.reworkSourcePostProcessId === pp.id || (pp.isRework && pj.reworkSourcePostProcessId === pp.reworkSourcePostProcessId))
+    : null
+
+  const isReworkActive = pp?.isRework || (pp?.qualityResult === 'rework' && !pp.reworkAction)
 
   const qcConfig = [
     { key: 'pass' as const, label: '合格', color: '#22c55e', bg: 'rgba(34,197,94,0.15)', icon: <CheckCircle size={28} /> },
@@ -145,10 +202,14 @@ export default function PostProcessing() {
                   selectExisting(e.target.value)
                 }
               }}
-              style={{ ...inputStyle, appearance: 'none', paddingRight: 28, width: 220 }}
+              style={{ ...inputStyle, appearance: 'none', paddingRight: 28, width: 320 }}
             >
               <option value="">— 新建检测单 —</option>
-              {postProcesses.map(p => <option key={p.id} value={p.id}>{p.id}</option>)}
+              {postProcesses.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.id} {p.isRework ? '[返工]' : ''} {p.qualityResult === 'rework' ? '[待处理]' : ''}
+                </option>
+              ))}
             </select>
             <ChevronDown size={14} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', pointerEvents: 'none' }} />
           </div>
@@ -166,7 +227,39 @@ export default function PostProcessing() {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0 }}>
+      {(pp?.isRework || sourcePP) && (
+        <div className="card" style={{ padding: '12px 16px', background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.3)', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16, marginTop: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <RotateCcw size={16} style={{ color: '#eab308', flexShrink: 0 }} />
+            <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 10, fontWeight: 600, background: 'rgba(234,179,8,0.15)', color: '#eab308' }}>
+              {isReworkActive && pp?.qualityResult === 'rework' ? '返工中' : '返工'}
+            </span>
+          </div>
+          {sourcePP && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#e5e7eb' }}>
+              <span style={{ color: '#94a3b8' }}>返工来源：</span>
+              <span style={{ fontWeight: 600, color: '#eab308' }}>#{sourcePP.id}</span>
+              <ArrowRight size={12} style={{ color: '#64748b' }} />
+              <span style={{ color: '#94a3b8' }}>处理人</span>
+              <span style={{ fontWeight: 600 }}>{sourcePP.operator || '—'}</span>
+            </div>
+          )}
+          {pp?.isRework && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#e5e7eb' }}>
+              <span style={{ color: '#94a3b8' }}>当前处理人：</span>
+              <span style={{ fontWeight: 600 }}>{pp.operator || '—'}</span>
+            </div>
+          )}
+          {relatedReworkTask?.note && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#e5e7eb' }}>
+              <span style={{ color: '#94a3b8' }}>返工说明：</span>
+              <span>{relatedReworkTask.note}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0, marginTop: 12 }}>
         <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 14, overflow: 'auto' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div><div style={labelStyle}>关联订单</div>
@@ -177,6 +270,15 @@ export default function PostProcessing() {
             </div>
             <div><div style={labelStyle}>操作员</div><input value={data.operator} onChange={e => setFormField('operator', e.target.value)} style={inputStyle} placeholder="请输入操作员姓名" /></div>
           </div>
+
+          {order && (
+            <div style={{ padding: '8px 12px', background: 'rgba(74,144,217,0.08)', border: '1px solid rgba(74,144,217,0.2)', borderRadius: 6, fontSize: 12, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              <span style={{ color: '#94a3b8' }}>客户：<b style={{ color: '#e5e7eb' }}>{order.customerName}</b></span>
+              <span style={{ color: '#94a3b8' }}>材料：<b style={{ color: '#e5e7eb' }}>{order.material}</b></span>
+              <span style={{ color: '#94a3b8' }}>数量：<b style={{ color: '#e5e7eb' }}>{order.quantity}</b></span>
+              <span style={{ color: '#94a3b8' }}>目标表面：<b style={{ color: '#e5e7eb' }}>{order.surfaceFinish}</b></span>
+            </div>
+          )}
 
           <div style={{ fontSize: 14, fontWeight: 600, color: '#e5e7eb', borderBottom: '1px solid #334155', paddingBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><Wind size={16} /> 喷砂参数</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
@@ -217,6 +319,102 @@ export default function PostProcessing() {
               </button>
             ))}
           </div>
+
+          {pp && pp.qualityResult === 'rework' && !pp.reworkAction && (
+            <div style={{ padding: 16, background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <RotateCcw size={18} style={{ color: '#eab308', flexShrink: 0 }} />
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#eab308' }}>返工闭环处理</span>
+              </div>
+              <div>
+                <div style={{ ...labelStyle, marginBottom: 6 }}>选择返工方式</div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    onClick={() => setReworkType('reprocess')}
+                    style={{
+                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 14,
+                      background: reworkType === 'reprocess' ? 'rgba(74,144,217,0.15)' : '#0f172a',
+                      border: `1px solid ${reworkType === 'reprocess' ? '#4A90D9' : '#334155'}`,
+                      borderRadius: 8, cursor: 'pointer', color: reworkType === 'reprocess' ? '#4A90D9' : '#94a3b8',
+                      transition: 'all 0.15s', fontWeight: 600
+                    }}
+                  >
+                    <Sparkles size={18} /> 重做后处理
+                  </button>
+                  <button
+                    onClick={() => setReworkType('reprint')}
+                    style={{
+                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 14,
+                      background: reworkType === 'reprint' ? 'rgba(255,107,53,0.15)' : '#0f172a',
+                      border: `1px solid ${reworkType === 'reprint' ? '#FF6B35' : '#334155'}`,
+                      borderRadius: 8, cursor: 'pointer', color: reworkType === 'reprint' ? '#FF6B35' : '#94a3b8',
+                      transition: 'all 0.15s', fontWeight: 600
+                    }}
+                  >
+                    <Printer size={18} /> 重新打印
+                  </button>
+                </div>
+              </div>
+              <div>
+                <div style={labelStyle}>返工说明（可选）</div>
+                <textarea
+                  value={reworkNote}
+                  onChange={e => setReworkNote(e.target.value)}
+                  placeholder="请填写返工原因、注意事项等说明..."
+                  style={{ ...inputStyle, minHeight: 72, resize: 'vertical' }}
+                />
+              </div>
+              <button
+                onClick={handleCreateRework}
+                style={{
+                  padding: '10px 16px', background: '#FF6B35', color: '#fff', border: 'none',
+                  borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 600,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
+                }}
+              >
+                <CheckCircle size={18} /> 确认创建返工任务
+              </button>
+            </div>
+          )}
+
+          {pp && pp.qualityResult === 'rework' && pp.reworkAction && (
+            <div style={{ padding: 14, background: pp.reworkAction === 'reprint' ? 'rgba(255,107,53,0.08)' : 'rgba(74,144,217,0.08)', border: `1px solid ${pp.reworkAction === 'reprint' ? 'rgba(255,107,53,0.3)' : 'rgba(74,144,217,0.3)'}`, borderRadius: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {pp.reworkAction === 'reprint'
+                    ? <Printer size={18} style={{ color: '#FF6B35' }} />
+                    : <Sparkles size={18} style={{ color: '#4A90D9' }} />
+                  }
+                  <span style={{ fontSize: 13, fontWeight: 600, color: pp.reworkAction === 'reprint' ? '#FF6B35' : '#4A90D9' }}>
+                    已创建{pp.reworkAction === 'reprint' ? '返工打印' : '返工后处理'}任务
+                  </span>
+                </div>
+                {pp.reworkAction === 'reprint' && (
+                  <button
+                    onClick={jumpToPrinting}
+                    style={{
+                      padding: '6px 14px', background: '#FF6B35', color: '#fff', border: 'none',
+                      borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                      display: 'flex', alignItems: 'center', gap: 6
+                    }}
+                  >
+                    跳转到打印作业 <ArrowRight size={14} />
+                  </button>
+                )}
+              </div>
+              {pp.reworkNote && (
+                <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                  说明：<span style={{ color: '#e5e7eb' }}>{pp.reworkNote}</span>
+                </div>
+              )}
+              <div style={{ fontSize: 12, color: '#94a3b8', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                <span>当前处理人：<b style={{ color: '#e5e7eb' }}>{pp.operator || '—'}</b></span>
+                {relatedPrintJob && (
+                  <span>打印任务：<b style={{ color: '#FF6B35' }}>#{relatedPrintJob.id}</b>（{relatedPrintJob.status === 'printing' ? '打印中' : relatedPrintJob.status === 'queued' ? '排队中' : relatedPrintJob.status === 'paused' ? '已暂停' : '已完成'}）</span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10, overflow: 'auto' }}>

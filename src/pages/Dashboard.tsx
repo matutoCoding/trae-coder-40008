@@ -15,8 +15,6 @@ const monthlyData = [
   { month: '11月', orders: 6 }, { month: '12月', orders: 6 },
 ]
 
-const STAGE_DAYS_THRESHOLD = 3
-
 interface AlertItem {
   id: string
   type: 'stuck' | 'missing' | 'rework' | 'pending'
@@ -30,7 +28,7 @@ interface AlertItem {
 
 export default function Dashboard() {
   const navigate = useNavigate()
-  const { orders, printJobs, inspections, materialTasks, supportRemovals, postProcesses, shipments } = useStore()
+  const { orders, printJobs, inspections, materialTasks, supportRemovals, postProcesses, shipments, processLogs, setSelectedOrderId, clearSelectedOrderId } = useStore()
 
   const stats = useMemo(() => {
     const printing = orders.filter(o => o.status === 'printing').length
@@ -51,22 +49,42 @@ export default function Dashboard() {
     const list: AlertItem[] = []
     const now = new Date()
 
-    // 1. 卡单预警 - 订单在某个工序停留太久
     orders.forEach(order => {
-      const orderDate = new Date(order.createdAt)
-      const daysDiff = Math.floor((now.getTime() - orderDate.getTime()) / (1000 * 60 * 60 * 24))
-      let stageDays = daysDiff
-      if (order.status !== 'pending' && order.status !== 'completed') {
-        stageDays = Math.max(1, daysDiff - STAGE_DAYS_THRESHOLD * pipelineStages.indexOf(order.status))
+      if (order.status === 'completed') return
+
+      const statusStageMap: Record<string, string[]> = {
+        pending: ['order_created'],
+        inspecting: ['inspection_rejected', 'order_created'],
+        preparing: ['inspection_confirmed'],
+        printing: ['material_picked'],
+        removing: ['print_completed'],
+        processing: ['support_completed'],
+        shipping: ['postprocess_judged'],
       }
-      if (order.status !== 'completed' && stageDays > STAGE_DAYS_THRESHOLD) {
+
+      const stagesToFind = statusStageMap[order.status] || ['order_created']
+      let startTime: Date = new Date(order.createdAt)
+
+      for (const stage of stagesToFind) {
+        const matchedLogs = processLogs
+          .filter(l => l.orderId === order.id && l.stage === stage)
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        if (matchedLogs.length > 0) {
+          startTime = new Date(matchedLogs[0].timestamp)
+          break
+        }
+      }
+
+      const daysDiff = Math.floor((now.getTime() - startTime.getTime()) / (1000 * 60 * 60 * 24))
+
+      if (daysDiff > 3) {
         list.push({
           id: `stuck-${order.id}`,
           type: 'stuck',
           orderId: order.id,
           title: `${statusLabels[order.status]}工序卡单`,
-          description: `订单 ${order.id} 在「${statusLabels[order.status]}」已停留约 ${stageDays} 天`,
-          severity: stageDays > 7 ? 'high' : 'medium',
+          description: `订单 ${order.id} 在「${statusLabels[order.status]}」已停留约 ${daysDiff} 天`,
+          severity: daysDiff > 7 ? 'high' : 'medium',
           action: '前往处理',
           path: `/order`,
         })
@@ -178,7 +196,7 @@ export default function Dashboard() {
     // 按严重程度排序
     const severityOrder = { high: 0, medium: 1, low: 2 }
     return list.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity])
-  }, [orders, inspections, materialTasks, printJobs, supportRemovals, postProcesses, shipments])
+  }, [orders, inspections, materialTasks, printJobs, supportRemovals, postProcesses, shipments, processLogs])
 
   const alertStats = useMemo(() => ({
     total: alerts.length,
@@ -264,7 +282,14 @@ export default function Dashboard() {
                   key={alert.id}
                   className="rounded-lg p-3 cursor-pointer transition-all hover:scale-[1.02]"
                   style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                  onClick={() => navigate(alert.path)}
+                  onClick={() => {
+                    if (alert.orderId !== '') {
+                      useStore.getState().setSelectedOrderId(alert.orderId)
+                    } else {
+                      useStore.getState().clearSelectedOrderId()
+                    }
+                    navigate(alert.path)
+                  }}
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2">

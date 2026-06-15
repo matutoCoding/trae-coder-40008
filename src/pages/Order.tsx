@@ -1,7 +1,7 @@
-import { useState, useMemo } from 'react'
-import { Upload, FileText, Package, Calendar, Hash, Layers, Sparkles, X, ShoppingCart, Clock, Truck, Eye, ArrowLeft, CheckCircle, Printer, Scissors, SearchCheck, Box } from 'lucide-react'
-import { useStore, statusLabels, statusColors } from '@/store'
-import type { Order } from '@/store'
+import { useState, useMemo, useEffect } from 'react'
+import { Upload, FileText, Package, Calendar, Hash, Layers, Sparkles, X, ShoppingCart, Clock, Truck, Eye, ArrowLeft, CheckCircle, Printer, Scissors, SearchCheck, Box, AlertTriangle, RotateCcw, FileImage } from 'lucide-react'
+import { useStore, statusLabels, statusColors, shipmentTypeLabels, shipmentTypeColors } from '@/store'
+import type { Order, ProcessLog, ModelInspection, Shipment } from '@/store'
 
 const MATERIALS = ['Ti6Al4V', '316L', 'AlSi10Mg', 'In718', 'H13', 'CoCr']
 const PROCESSES = ['SLM', 'DMLS', 'EBM']
@@ -25,15 +25,57 @@ const stageMeta: Record<Order['status'], { label: string; icon: React.ReactNode 
   completed: { label: '已发货', icon: <Truck size={16} /> },
 }
 
+const calcStuckDays = (logs: ProcessLog[]): number => {
+  if (logs.length === 0) return 0
+  const sorted = [...logs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+  const lastLog = sorted[0]
+  const lastTime = new Date(lastLog.timestamp).getTime()
+  const now = Date.now()
+  return Math.floor((now - lastTime) / (24 * 3600 * 1000))
+}
+
 export default function Order() {
-  const { orders, printJobs, inspections, supportRemovals, postProcesses, shipments, addOrder } = useStore()
+  const { orders, printJobs, inspections, supportRemovals, postProcesses, shipments, processLogs, addOrder, getLatestInspectionForOrder } = useStore()
   const [tab, setTab] = useState<typeof TABS[number]>('我要下单')
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const orderId = params.get('orderId')
+    const shipmentId = params.get('shipmentId')
+    if (orderId) {
+      const found = orders.find(o => o.id === orderId)
+      if (found) {
+        setTab('订单管理')
+        setSelectedOrderId(found.id)
+      }
+    } else if (shipmentId) {
+      const ship = shipments.find(s => s.id === shipmentId)
+      if (ship) {
+        const found = orders.find(o => o.id === ship.orderId)
+        if (found) {
+          setTab('订单管理')
+          setSelectedOrderId(found.id)
+        }
+      }
+    }
+  }, [orders, shipments])
 
   const selectedOrder = orders.find(o => o.id === selectedOrderId)
 
   const printJobMap = useMemo(() => Object.fromEntries(printJobs.map(j => [j.orderId, j])), [printJobs])
   const inspectionMap = useMemo(() => Object.fromEntries(inspections.map(i => [i.orderId, i])), [inspections])
+  const orderInspectionsMap = useMemo(() => {
+    const map: Record<string, ModelInspection[]> = {}
+    inspections.forEach(i => {
+      if (!map[i.orderId]) map[i.orderId] = []
+      map[i.orderId].push(i)
+    })
+    Object.keys(map).forEach(k => {
+      map[k].sort((a, b) => new Date(b.inspectedAt).getTime() - new Date(a.inspectedAt).getTime())
+    })
+    return map
+  }, [inspections])
   const supportMap = useMemo(() => Object.fromEntries(supportRemovals.map(s => [s.orderId, s])), [supportRemovals])
   const postProcessMap = useMemo(() => Object.fromEntries(postProcesses.map(p => [p.orderId, p])), [postProcesses])
   const shipmentMap = useMemo(() => {
@@ -47,54 +89,129 @@ export default function Order() {
     })
     return map
   }, [shipments])
+  const processLogsMap = useMemo(() => {
+    const map: Record<string, ProcessLog[]> = {}
+    processLogs.forEach(l => {
+      if (!map[l.orderId]) map[l.orderId] = []
+      map[l.orderId].push(l)
+    })
+    Object.keys(map).forEach(k => {
+      map[k].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    })
+    return map
+  }, [processLogs])
 
   const buildTimeline = (order: Order) => {
+    const logs = processLogsMap[order.id] ?? []
     const currentIdx = STAGE_ORDER.indexOf(order.status)
-    const timeline: { key: Order['status']; label: string; icon: React.ReactNode; status: 'done' | 'current' | 'pending'; time: string; detail?: string }[] = []
+    const timeline: { key: Order['status']; label: string; icon: React.ReactNode; status: 'done' | 'current' | 'pending'; time: string; detail?: string; extraTags?: { text: string; color: string }[] }[] = []
+
+    const getLogByStage = (stage: ProcessLog['stage']) => {
+      const found = logs.find(l => l.stage === stage)
+      return found
+    }
+
+    const reworkLog = logs.find(l => l.stage === 'rework_created')
 
     STAGE_ORDER.forEach((stage, idx) => {
       const meta = stageMeta[stage]
       let status: 'done' | 'current' | 'pending' = 'pending'
       let time = ''
       let detail = ''
+      const extraTags: { text: string; color: string }[] = []
 
       if (idx < currentIdx) status = 'done'
       else if (idx === currentIdx) status = 'current'
 
       if (stage === 'pending') {
-        time = order.createdAt
-        detail = `${order.customerName} 提交订单`
+        const log = getLogByStage('order_created')
+        time = log ? new Date(log.timestamp).toLocaleString('zh-CN') : order.createdAt
+        detail = log?.note || `${order.customerName} 提交订单`
       }
-      if (stage === 'inspecting' && inspectionMap[order.id]) {
-        const insp = inspectionMap[order.id]
-        time = insp.inspectedAt
-        detail = `${insp.inspector} · ${insp.defectCount}项缺陷 · ${insp.isPassed ? '通过' : '未通过'}`
+      if (stage === 'inspecting') {
+        const confirmedLog = getLogByStage('inspection_confirmed')
+        const rejectedLog = getLogByStage('inspection_rejected')
+        const usedLog = confirmedLog || rejectedLog
+        if (usedLog) {
+          time = new Date(usedLog.timestamp).toLocaleString('zh-CN')
+          detail = usedLog.note || ''
+          const insp = getLatestInspectionForOrder(order.id)
+          if (insp && !insp.isPassed) {
+            if (insp.rejectReason) detail = `${detail}${detail ? ' · ' : ''}退回原因：${insp.rejectReason}`
+            if (insp.rejectNote) detail = `${detail}${detail ? ' · ' : ''}备注：${insp.rejectNote}`
+          }
+        } else if (inspectionMap[order.id]) {
+          const insp = inspectionMap[order.id]
+          time = insp.inspectedAt
+          detail = `${insp.inspector} · ${insp.defectCount}项缺陷 · ${insp.isPassed ? '通过' : '未通过'}`
+        }
       }
-      if (stage === 'printing' && printJobMap[order.id]) {
-        const job = printJobMap[order.id]
-        time = job.startedAt ? new Date(job.startedAt).toLocaleDateString('zh-CN') : '未开始'
-        detail = `功率${job.laserPower}W · 层厚${job.layerThickness}μm · ${status === 'done' ? '已完成' : (status === 'current' ? `第${job.currentLayer}/${job.totalLayers}层` : '待开始')}`
+      if (stage === 'preparing') {
+        const log = getLogByStage('material_picked')
+        if (log) {
+          time = new Date(log.timestamp).toLocaleString('zh-CN')
+          detail = log.note || ''
+        }
       }
-      if (stage === 'removing' && supportMap[order.id]) {
-        const sr = supportMap[order.id]
-        time = sr.startedAt ? new Date(sr.startedAt).toLocaleDateString('zh-CN') : ''
-        const methodLabel = sr.removalMethod === 'wire-cut' ? '线切割' : sr.removalMethod === 'acid' ? '酸溶' : '手工去除'
-        detail = `${methodLabel} · ${sr.status === 'completed' ? '已完成' : sr.status === 'in-progress' ? '进行中' : '待处理'}`
+      if (stage === 'printing') {
+        const log = getLogByStage('print_completed')
+        if (log) {
+          time = new Date(log.timestamp).toLocaleString('zh-CN')
+          detail = log.note || ''
+        }
+        if (printJobMap[order.id]) {
+          const job = printJobMap[order.id]
+          if (!time) time = job.startedAt ? new Date(job.startedAt).toLocaleDateString('zh-CN') : '未开始'
+          if (!detail) detail = `功率${job.laserPower}W · 层厚${job.layerThickness}μm · ${status === 'done' ? '已完成' : (status === 'current' ? `第${job.currentLayer}/${job.totalLayers}层` : '待开始')}`
+        }
       }
-      if (stage === 'processing' && postProcessMap[order.id]) {
-        const pp = postProcessMap[order.id]
-        detail = `${pp.polishingMethod || '未设置'} · Ra${pp.actualRoughness || '-'} · 尺寸${pp.dimensions?.length || 0}项`
+      if (stage === 'removing') {
+        const log = getLogByStage('support_completed')
+        if (log) {
+          time = new Date(log.timestamp).toLocaleString('zh-CN')
+          detail = log.note || ''
+        }
+        if (supportMap[order.id]) {
+          const sr = supportMap[order.id]
+          if (!time) time = sr.startedAt ? new Date(sr.startedAt).toLocaleDateString('zh-CN') : ''
+          if (!detail) {
+            const methodLabel = sr.removalMethod === 'wire-cut' ? '线切割' : sr.removalMethod === 'acid' ? '酸溶' : '手工去除'
+            detail = `${methodLabel} · ${sr.status === 'completed' ? '已完成' : sr.status === 'in-progress' ? '进行中' : '待处理'}`
+          }
+        }
+      }
+      if (stage === 'processing') {
+        const log = getLogByStage('postprocess_judged')
+        if (log) {
+          time = new Date(log.timestamp).toLocaleString('zh-CN')
+          detail = log.note || ''
+        }
+        if (postProcessMap[order.id]) {
+          const pp = postProcessMap[order.id]
+          if (!detail) detail = `${pp.polishingMethod || '未设置'} · Ra${pp.actualRoughness || '-'} · 尺寸${pp.dimensions?.length || 0}项`
+        }
+        if (reworkLog) {
+          extraTags.push({ text: '返工', color: 'bg-orange-500/20 text-orange-400' })
+          if (reworkLog.note) detail = `${detail}${detail ? ' · ' : ''}返工说明：${reworkLog.note}`
+        }
       }
       if (stage === 'shipping') {
         detail = '成品待发货'
       }
-      if (stage === 'completed' && shipmentMap[order.id]?.length) {
-        const sh = shipmentMap[order.id][0]
-        time = sh.shippedAt ? new Date(sh.shippedAt).toLocaleDateString('zh-CN') : ''
-        detail = `${sh.courierCompany} · ${sh.trackingNo}`
+      if (stage === 'completed') {
+        const log = getLogByStage('shipped')
+        if (log) {
+          time = new Date(log.timestamp).toLocaleString('zh-CN')
+          detail = log.note || ''
+        }
+        if (shipmentMap[order.id]?.length) {
+          const sh = shipmentMap[order.id][0]
+          if (!time) time = sh.shippedAt ? new Date(sh.shippedAt).toLocaleDateString('zh-CN') : ''
+          if (!detail) detail = `${sh.courierCompany} · ${sh.trackingNo}`
+        }
       }
 
-      timeline.push({ key: stage, label: meta.label, icon: meta.icon, status, time, detail })
+      timeline.push({ key: stage, label: meta.label, icon: meta.icon, status, time, detail, extraTags })
     })
 
     return timeline
@@ -103,23 +220,35 @@ export default function Order() {
   if (selectedOrder) {
     const timeline = buildTimeline(selectedOrder)
     const orderShipments = shipmentMap[selectedOrder.id] ?? []
-    const latestShipment = orderShipments[0]
+    const latestInspection = getLatestInspectionForOrder(selectedOrder.id)
+    const orderInspections = orderInspectionsMap[selectedOrder.id] ?? []
+    const passedCount = orderInspections.filter(i => i.isPassed).length
+    const logs = processLogsMap[selectedOrder.id] ?? []
+    const stuckDays = calcStuckDays(logs)
+
+    const normalShipments = orderShipments.filter(s => s.shipmentType === 'normal')
+    const reissueShipments = orderShipments.filter(s => s.shipmentType === 'reissue')
+    const resendShipments = orderShipments.filter(s => s.shipmentType === 'resend')
 
     return (
       <div className="page">
         <div className="page-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <button onClick={() => setSelectedOrderId(null)} className="btn-secondary" style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 4 }}>
               <ArrowLeft size={14} /> 返回列表
             </button>
             <h1 style={{ margin: 0 }}>订单详情</h1>
             <span className="font-display" style={{ color: '#4A90D9', fontSize: 18 }}>{selectedOrder.id}</span>
             <span className={`status-badge ${statusColors[selectedOrder.status]}`} style={{ marginLeft: 8 }}>{statusLabels[selectedOrder.status]}</span>
+            {stuckDays > 3 && (
+              <span style={{ fontSize: 11, padding: '2px 10px', borderRadius: 8, background: 'rgba(239,68,68,0.2)', color: '#EF4444', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <AlertTriangle size={12} /> 卡单 {stuckDays} 天
+              </span>
+            )}
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2fr', gap: 16, flex: 1, minHeight: 0 }}>
-          {/* 左侧：订单信息 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, overflow: 'auto' }}>
             <div className="card" style={{ padding: 16 }}>
               <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}><FileText size={16} style={{ color: '#FF6B35' }} /> 基本信息</h3>
@@ -143,7 +272,47 @@ export default function Order() {
               </div>
             </div>
 
-            {latestShipment && (
+            {latestInspection && (
+              <div className="card" style={{ padding: 16, border: latestInspection.isPassed ? '1px solid rgba(34,197,94,0.3)' : '1px solid rgba(239,68,68,0.3)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 6, color: latestInspection.isPassed ? '#22C55E' : '#EF4444' }}>
+                    <SearchCheck size={16} /> 模型检查
+                  </h3>
+                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: latestInspection.isPassed ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)', color: latestInspection.isPassed ? '#22C55E' : '#EF4444', fontWeight: 600 }}>
+                    {latestInspection.isPassed ? '通过' : '未通过'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>检查员</span><b>{latestInspection.inspector}</b></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>检查时间</span><b>{latestInspection.inspectedAt}</b></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>缺陷项数</span><b>{latestInspection.defectCount} 项</b></div>
+                  {!latestInspection.isPassed && latestInspection.rejectReason && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 10px', background: 'rgba(239,68,68,0.1)', borderRadius: 6 }}>
+                      <span style={{ color: '#EF4444', fontSize: 12, fontWeight: 600 }}>退回原因</span>
+                      <span style={{ fontSize: 12 }}>{latestInspection.rejectReason}</span>
+                    </div>
+                  )}
+                  {!latestInspection.isPassed && latestInspection.rejectNote && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 10px', background: 'rgba(239,68,68,0.08)', borderRadius: 6 }}>
+                      <span style={{ color: '#EF4444', fontSize: 12, fontWeight: 600 }}>备注说明</span>
+                      <span style={{ fontSize: 12 }}>{latestInspection.rejectNote}</span>
+                    </div>
+                  )}
+                  {orderInspections.length > 0 && (
+                    <div style={{ borderTop: '1px solid #333', paddingTop: 10, marginTop: 4 }}>
+                      <div style={{ fontSize: 12, color: '#999', marginBottom: 6 }}>历史检查记录：</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
+                        <span>共 <b style={{ color: '#e5e7eb' }}>{orderInspections.length}</b> 次</span>
+                        <span style={{ color: '#22C55E' }}>通过 {passedCount} 次</span>
+                        <span style={{ color: '#EF4444' }}>未通过 {orderInspections.length - passedCount} 次</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {orderShipments.length > 0 && (
               <div className="card" style={{ padding: 16, border: '1px solid rgba(34,197,94,0.3)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                   <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 6, color: '#22C55E' }}><Truck size={16} /> 发货信息</h3>
@@ -151,21 +320,44 @@ export default function Order() {
                     <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: 'rgba(34,197,94,0.2)', color: '#22C55E', fontWeight: 600 }}>共 {orderShipments.length} 条</span>
                   )}
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13, marginBottom: orderShipments.length > 1 ? 12 : 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>快递公司</span><b>{latestShipment.courierCompany}</b></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>快递单号</span><b style={{ fontFamily: 'Rajdhani, sans-serif', color: '#4A90D9' }}>{latestShipment.trackingNo}</b></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>发货时间</span><b>{new Date(latestShipment.shippedAt).toLocaleString('zh-CN')}</b></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#666' }}>运输状态</span><b style={{ color: latestShipment.status === 'delivered' ? '#22C55E' : '#3B82F6' }}>{latestShipment.status === 'shipped' ? '运输中' : '已签收'}</b></div>
-                </div>
-                {orderShipments.length > 1 && (
-                  <div style={{ borderTop: '1px solid #333', paddingTop: 12 }}>
-                    <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>历史发货记录：</div>
+
+                {normalShipments.length > 0 && (
+                  <div style={{ marginBottom: normalShipments.length > 0 && (reissueShipments.length > 0 || resendShipments.length > 0) ? 14 : 0 }}>
+                    <div style={{ fontSize: 12, color: '#999', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span className={`status-badge ${shipmentTypeColors.normal}`} style={{ fontSize: 10, padding: '1px 6px' }}>{shipmentTypeLabels.normal}</span>
+                      <span>（{normalShipments.length} 条）</span>
+                    </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {orderShipments.slice(1).map(sh => (
-                        <div key={sh.id} style={{ padding: '8px 10px', background: '#16181D', borderRadius: 6, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ color: '#999' }}>{sh.courierCompany} · {sh.trackingNo}</span>
-                          <span style={{ color: '#666' }}>{new Date(sh.shippedAt).toLocaleDateString('zh-CN')}</span>
-                        </div>
+                      {normalShipments.map((sh, idx) => (
+                        <ShipmentItem key={sh.id} shipment={sh} showDetails={idx === 0} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {reissueShipments.length > 0 && (
+                  <div style={{ marginBottom: resendShipments.length > 0 ? 14 : 0 }}>
+                    <div style={{ fontSize: 12, color: '#999', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span className={`status-badge ${shipmentTypeColors.reissue}`} style={{ fontSize: 10, padding: '1px 6px' }}>{shipmentTypeLabels.reissue}</span>
+                      <span>（{reissueShipments.length} 条）</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {reissueShipments.map(sh => (
+                        <ShipmentItem key={sh.id} shipment={sh} showDetails />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {resendShipments.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 12, color: '#999', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span className={`status-badge ${shipmentTypeColors.resend}`} style={{ fontSize: 10, padding: '1px 6px' }}>{shipmentTypeLabels.resend}</span>
+                      <span>（{resendShipments.length} 条）</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {resendShipments.map(sh => (
+                        <ShipmentItem key={sh.id} shipment={sh} showDetails />
                       ))}
                     </div>
                   </div>
@@ -174,13 +366,11 @@ export default function Order() {
             )}
           </div>
 
-          {/* 右侧：时间线 */}
           <div className="card" style={{ padding: 20, overflow: 'auto' }}>
             <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 6 }}><Clock size={18} style={{ color: '#FF6B35' }} /> 生产流转时间线</h3>
             <div style={{ position: 'relative', paddingLeft: 8 }}>
               {timeline.map((item, idx) => (
                 <div key={item.key} style={{ position: 'relative', display: 'flex', gap: 14, paddingBottom: idx === timeline.length - 1 ? 0 : 24 }}>
-                  {/* 左侧圆点 */}
                   <div style={{ position: 'relative', zIndex: 2, width: 32, height: 32, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
                     background: item.status === 'done' ? '#22C55E' : item.status === 'current' ? '#FF6B35' : '#333',
                     color: item.status === 'pending' ? '#666' : '#fff',
@@ -188,16 +378,17 @@ export default function Order() {
                   }}>
                     {item.status === 'done' ? <CheckCircle size={16} /> : item.icon}
                   </div>
-                  {/* 连接线 */}
                   {idx < timeline.length - 1 && (
                     <div style={{ position: 'absolute', left: 15, top: 32, width: 2, height: 'calc(100% - 8px)',
                       background: item.status === 'done' ? 'linear-gradient(to bottom, #22C55E, #22C55E)' : 'linear-gradient(to bottom, #333, #333)'
                     }} />
                   )}
-                  {/* 右侧内容 */}
                   <div style={{ flex: 1, paddingTop: 4 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 600, fontSize: 14, color: item.status === 'pending' ? '#666' : '#e5e7eb' }}>{item.label}</span>
+                      {item.extraTags?.map((tag, i) => (
+                        <span key={i} className={`status-badge ${tag.color}`} style={{ fontSize: 10, padding: '1px 8px' }}>{tag.text}</span>
+                      ))}
                       {item.status === 'current' && <span style={{ fontSize: 10, padding: '1px 8px', borderRadius: 8, background: 'rgba(255,107,53,0.2)', color: '#FF6B35', fontWeight: 600 }}>进行中</span>}
                       {item.status === 'done' && <span style={{ fontSize: 10, padding: '1px 8px', borderRadius: 8, background: 'rgba(34,197,94,0.2)', color: '#22C55E', fontWeight: 600 }}>已完成</span>}
                     </div>
@@ -235,7 +426,7 @@ export default function Order() {
                 <th>数量</th>
                 <th>工序进度</th>
                 <th>打印进度</th>
-                <th>发货时间</th>
+                <th>发货状态</th>
                 <th>金额</th>
                 <th>操作</th>
               </tr>
@@ -248,19 +439,31 @@ export default function Order() {
                 const currentIdx = STAGE_ORDER.indexOf(order.status)
                 const progress = Math.round(((currentIdx + 0.5) / STAGE_ORDER.length) * 100)
                 const printProgress = job ? Math.round((job.currentLayer / job.totalLayers) * 100) : 0
+                const logs = processLogsMap[order.id] ?? []
+                const stuckDays = calcStuckDays(logs)
 
                 return (
                   <tr key={order.id}>
                     <td><span className="font-display" style={{ color: '#4A90D9', fontWeight: 600 }}>{order.id}</span></td>
-                    <td>{order.customerName}<div style={{ fontSize: 11, color: '#666' }}>{order.company}</div></td>
+                    <td>
+                      <div>
+                        {order.customerName}
+                        <div style={{ fontSize: 11, color: '#666' }}>{order.company}</div>
+                      </div>
+                    </td>
                     <td><span style={{ color: '#C0A062' }}>{order.material}</span></td>
                     <td>{order.quantity} 件</td>
                     <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <span className={`status-badge ${statusColors[order.status]}`}>{statusLabels[order.status]}</span>
                         <div style={{ width: 60, height: 4, background: '#333', borderRadius: 2 }}>
                           <div style={{ width: `${progress}%`, height: '100%', background: '#FF6B35', borderRadius: 2 }} />
                         </div>
+                        {stuckDays > 3 && (
+                          <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 6, background: 'rgba(239,68,68,0.2)', color: '#EF4444', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                            <AlertTriangle size={10} /> 卡单{stuckDays}天
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td>
@@ -274,12 +477,22 @@ export default function Order() {
                       ) : <span style={{ color: '#666', fontSize: 12 }}>未安排</span>}
                     </td>
                     <td>
-                      {latestShipment ? (
+                      {orderShipments.length > 0 ? (
                         <div style={{ fontSize: 12 }}>
-                          <div>{new Date(latestShipment.shippedAt).toLocaleDateString('zh-CN')}</div>
-                          <div style={{ color: '#22C55E', fontSize: 11 }}>
-                            {latestShipment.courierCompany}
-                            {orderShipments.length > 1 && <span style={{ color: '#666', marginLeft: 4 }}>({orderShipments.length}次)</span>}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>已发货</span>
+                            <b style={{ color: '#22C55E' }}>{orderShipments.length}</b>
+                            <span>次</span>
+                            {orderShipments.length > 1 && (
+                              <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 6, background: orderShipments.length > 2 ? 'rgba(249,115,22,0.2)' : 'rgba(234,179,8,0.2)', color: orderShipments.length > 2 ? '#F97316' : '#EAB308', fontWeight: 600 }}>
+                                多次发货
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ color: '#999', fontSize: 11, marginTop: 2 }}>
+                            {latestShipment ? new Date(latestShipment.shippedAt).toLocaleDateString('zh-CN') : ''}
+                            {' · '}
+                            {latestShipment?.courierCompany}
                           </div>
                         </div>
                       ) : <span style={{ color: '#666', fontSize: 12 }}>未发货</span>}
@@ -316,11 +529,54 @@ export default function Order() {
   )
 }
 
+function ShipmentItem({ shipment, showDetails }: { shipment: Shipment; showDetails: boolean }) {
+  return (
+    <div style={{ padding: '10px 12px', background: '#16181D', borderRadius: 6, fontSize: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <span style={{ color: '#e5e7eb', fontWeight: 500 }}>{shipment.courierCompany} · <span style={{ fontFamily: 'Rajdhani, sans-serif', color: '#4A90D9' }}>{shipment.trackingNo}</span></span>
+        <span style={{ color: '#666', fontSize: 11 }}>{new Date(shipment.shippedAt).toLocaleDateString('zh-CN')}</span>
+      </div>
+      {showDetails && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: '#666' }}>运输状态</span>
+            <b style={{ color: shipment.status === 'delivered' ? '#22C55E' : '#3B82F6' }}>{shipment.status === 'shipped' ? '运输中' : shipment.status === 'delivered' ? '已签收' : '待发货'}</b>
+          </div>
+          {shipment.operator && (
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#666' }}>操作人</span>
+              <b>{shipment.operator}</b>
+            </div>
+          )}
+          {(shipment.shipmentType === 'reissue' || shipment.shipmentType === 'resend') && shipment.reason && (
+            <div style={{ display: 'flex', gap: 6, marginTop: 4, padding: '6px 8px', background: 'rgba(234,179,8,0.1)', borderRadius: 4 }}>
+              <RotateCcw size={12} style={{ color: '#EAB308', flexShrink: 0, marginTop: 1 }} />
+              <div style={{ fontSize: 11 }}>
+                <span style={{ color: '#EAB308', fontWeight: 600 }}>原因：</span>
+                <span style={{ color: '#94a3b8' }}>{shipment.reason}</span>
+              </div>
+            </div>
+          )}
+          {(shipment.shipmentType === 'reissue' || shipment.shipmentType === 'resend') && shipment.attachmentPhotos && shipment.attachmentPhotos.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, marginTop: 2, padding: '6px 8px', background: 'rgba(59,130,246,0.08)', borderRadius: 4 }}>
+              <FileImage size={12} style={{ color: '#3B82F6', flexShrink: 0, marginTop: 1 }} />
+              <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                <span style={{ color: '#3B82F6', fontWeight: 600 }}>附件（{shipment.attachmentPhotos.length}个）：</span>
+                {shipment.attachmentPhotos.join('、')}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SettingsIcon() {
   return <Layers size={16} style={{ color: '#FF6B35' }} />
 }
 
-function OrderForm({ addOrder }: { addOrder: (order: any) => string }) {
+function OrderForm({ addOrder }: { addOrder: (order: Omit<Order, 'id' | 'createdAt' | 'status'>) => string }) {
   const [form, setForm] = useState({
     customerName: '', phone: '', company: '', modelFile: '',
     material: 'Ti6Al4V', process: 'SLM', surfaceFinish: 'Ra1.6',
