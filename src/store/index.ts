@@ -14,6 +14,7 @@ export interface Order {
   quantity: number
   surfaceFinish: string
   deliveryDate: string
+  shippedAt?: string
 }
 
 export interface ModelInspection {
@@ -166,10 +167,12 @@ const mockPostProcesses: PostProcess[] = [
 ]
 
 const mockShipments: Shipment[] = [
-  { id: 'SH001', orderId: 'MF20240006', photos: ['photo_front.jpg', 'photo_side.jpg', 'photo_detail.jpg'], courierCompany: '顺丰速运', trackingNo: 'SF1234567890', shippedAt: '2024-12-08 16:30', status: 'shipped' },
+  { id: 'SH001', orderId: 'MF20240006', photos: ['photo_front.jpg', 'photo_side.jpg', 'photo_detail.jpg'], courierCompany: '顺丰速运', trackingNo: 'SF1234567890', shippedAt: '2024-12-08T16:30:00.000Z', status: 'shipped' },
 ]
 
-interface AppState {
+const STORAGE_KEY = 'metalforge-pro-data-v1'
+
+type StoredState = {
   orders: Order[]
   inspections: ModelInspection[]
   materialStock: MaterialStock[]
@@ -179,8 +182,44 @@ interface AppState {
   supportRemovals: SupportRemoval[]
   postProcesses: PostProcess[]
   shipments: Shipment[]
+}
+
+const initialMock: StoredState = {
+  orders: mockOrders,
+  inspections: mockInspections,
+  materialStock: mockMaterialStock,
+  materialTasks: mockMaterialTasks,
+  printJobs: mockPrintJobs,
+  printMonitor: [],
+  supportRemovals: mockSupportRemovals,
+  postProcesses: mockPostProcesses,
+  shipments: mockShipments,
+}
+
+const loadFromStorage = (): StoredState | null => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw) as StoredState
+  } catch {
+    return null
+  }
+}
+
+const saveToStorage = (state: StoredState) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  } catch {
+    /* ignore */
+  }
+}
+
+const seedState = loadFromStorage() ?? initialMock
+
+interface AppState extends StoredState {
   addOrder: (order: Omit<Order, 'id' | 'createdAt' | 'status'>) => string
   updateOrderStatus: (id: string, status: Order['status']) => void
+  updateOrder: (id: string, updates: Partial<Order>) => void
   addInspection: (inspection: Omit<ModelInspection, 'id'>) => void
   updateMaterialStock: (id: string, quantity: number) => void
   addMaterialTask: (task: Omit<MaterialTask, 'id'>) => void
@@ -196,107 +235,235 @@ interface AppState {
   updateShipment: (id: string, updates: Partial<Shipment>) => void
 }
 
-export const useStore = create<AppState>((set) => ({
-  orders: mockOrders,
-  inspections: mockInspections,
-  materialStock: mockMaterialStock,
-  materialTasks: mockMaterialTasks,
-  printJobs: mockPrintJobs,
-  printMonitor: [],
-  supportRemovals: mockSupportRemovals,
-  postProcesses: mockPostProcesses,
-  shipments: mockShipments,
+const printStatusToOrderStatus = (printStatus: PrintJob['status']): Order['status'] | null => {
+  switch (printStatus) {
+    case 'printing':
+    case 'paused':
+      return 'printing'
+    case 'completed':
+      return 'removing'
+    default:
+      return null
+  }
+}
+
+export const useStore = create<AppState>((set, get) => ({
+  ...seedState,
 
   addOrder: (order) => {
     const id = generateId()
-    set((state) => ({
-      orders: [...state.orders, { ...order, id, createdAt: new Date().toISOString().split('T')[0], status: 'pending' }]
-    }))
+    set((state) => {
+      const next = {
+        ...state,
+        orders: [...state.orders, { ...order, id, createdAt: new Date().toISOString().split('T')[0], status: 'pending' as const }]
+      }
+      saveToStorage(next)
+      return next
+    })
     return id
   },
 
   updateOrderStatus: (id, status) => {
-    set((state) => ({
-      orders: state.orders.map(o => o.id === id ? { ...o, status } : o)
-    }))
+    set((state) => {
+      const next = {
+        ...state,
+        orders: state.orders.map(o => o.id === id ? { ...o, status } : o)
+      }
+      saveToStorage(next)
+      return next
+    })
+  },
+
+  updateOrder: (id, updates) => {
+    set((state) => {
+      const next = {
+        ...state,
+        orders: state.orders.map(o => o.id === id ? { ...o, ...updates } : o)
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   addInspection: (inspection) => {
-    set((state) => ({
-      inspections: [...state.inspections, { ...inspection, id: generateId() }]
-    }))
+    set((state) => {
+      const next = {
+        ...state,
+        inspections: [...state.inspections, { ...inspection, id: generateId() }]
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   updateMaterialStock: (id, quantity) => {
-    set((state) => ({
-      materialStock: state.materialStock.map(m => m.id === id ? { ...m, quantity } : m)
-    }))
+    set((state) => {
+      const next = {
+        ...state,
+        materialStock: state.materialStock.map(m => m.id === id ? { ...m, quantity } : m)
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   addMaterialTask: (task) => {
-    set((state) => ({
-      materialTasks: [...state.materialTasks, { ...task, id: generateId() }]
-    }))
+    set((state) => {
+      const next = {
+        ...state,
+        materialTasks: [...state.materialTasks, { ...task, id: generateId() }]
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   updateMaterialTaskStatus: (id, status, operator) => {
-    set((state) => ({
-      materialTasks: state.materialTasks.map(t => t.id === id ? { ...t, status, ...(operator ? { operator } : {}) } : t)
-    }))
+    set((state) => {
+      const next = {
+        ...state,
+        materialTasks: state.materialTasks.map(t => t.id === id ? { ...t, status, ...(operator ? { operator } : {}) } : t)
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   addPrintJob: (job) => {
-    set((state) => ({
-      printJobs: [...state.printJobs, { ...job, id: generateId(), currentLayer: 0, startedAt: job.status === 'printing' ? new Date().toISOString() : '' }]
-    }))
+    set((state) => {
+      const newJob = { ...job, id: generateId(), currentLayer: 0, startedAt: job.status === 'printing' ? new Date().toISOString() : '' }
+      const orderStatus = printStatusToOrderStatus(job.status)
+      const next = {
+        ...state,
+        printJobs: [...state.printJobs, newJob],
+        orders: orderStatus
+          ? state.orders.map(o => o.id === job.orderId ? { ...o, status: orderStatus } : o)
+          : state.orders
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   updatePrintJob: (id, updates) => {
-    set((state) => ({
-      printJobs: state.printJobs.map(j => j.id === id ? { ...j, ...updates } : j)
-    }))
+    set((state) => {
+      const job = state.printJobs.find(j => j.id === id)
+      if (!job) return state
+      const newStatus = updates.status ?? job.status
+      const orderStatus = printStatusToOrderStatus(newStatus)
+      const orders = orderStatus
+        ? state.orders.map(o => o.id === job.orderId ? { ...o, status: orderStatus } : o)
+        : state.orders
+      const next = {
+        ...state,
+        printJobs: state.printJobs.map(j => j.id === id ? { ...j, ...updates } : j),
+        orders,
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   addPrintMonitorRecord: (record) => {
-    set((state) => ({
-      printMonitor: [...state.printMonitor, { ...record, id: generateId() }]
-    }))
+    set((state) => {
+      const next = {
+        ...state,
+        printMonitor: [...state.printMonitor, { ...record, id: generateId() }]
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   addSupportRemoval: (removal) => {
-    set((state) => ({
-      supportRemovals: [...state.supportRemovals, { ...removal, id: generateId() }]
-    }))
+    set((state) => {
+      const next = {
+        ...state,
+        supportRemovals: [...state.supportRemovals, { ...removal, id: generateId() }]
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   updateSupportRemoval: (id, updates) => {
-    set((state) => ({
-      supportRemovals: state.supportRemovals.map(s => s.id === id ? { ...s, ...updates } : s)
-    }))
+    set((state) => {
+      const removal = state.supportRemovals.find(s => s.id === id)
+      if (!removal) return state
+      const newStatus = updates.status ?? removal.status
+      const orderStatus = newStatus === 'completed' ? 'processing' as const : null
+      const orders = orderStatus
+        ? state.orders.map(o => o.id === removal.orderId ? { ...o, status: orderStatus } : o)
+        : state.orders
+      const next = {
+        ...state,
+        supportRemovals: state.supportRemovals.map(s => s.id === id ? { ...s, ...updates } : s),
+        orders,
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   addPostProcess: (process) => {
-    set((state) => ({
-      postProcesses: [...state.postProcesses, { ...process, id: generateId() }]
-    }))
+    set((state) => {
+      const next = {
+        ...state,
+        postProcesses: [...state.postProcesses, { ...process, id: generateId() }]
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   updatePostProcess: (id, updates) => {
-    set((state) => ({
-      postProcesses: state.postProcesses.map(p => p.id === id ? { ...p, ...updates } : p)
-    }))
+    set((state) => {
+      const pp = state.postProcesses.find(p => p.id === id)
+      if (!pp) return state
+      const newResult = updates.qualityResult ?? pp.qualityResult
+      let orderStatus: Order['status'] | null = null
+      if (newResult === 'pass') orderStatus = 'shipping'
+      else if (newResult === 'rework') orderStatus = 'processing'
+      else if (newResult === 'scrap') orderStatus = 'pending'
+      const orders = orderStatus
+        ? state.orders.map(o => o.id === pp.orderId ? { ...o, status: orderStatus } : o)
+        : state.orders
+      const next = {
+        ...state,
+        postProcesses: state.postProcesses.map(p => p.id === id ? { ...p, ...updates } : p),
+        orders,
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   addShipment: (shipment) => {
-    set((state) => ({
-      shipments: [...state.shipments, { ...shipment, id: generateId() }]
-    }))
+    set((state) => {
+      const shippedAt = shipment.shippedAt
+      const next = {
+        ...state,
+        shipments: [...state.shipments, { ...shipment, id: generateId() }],
+        orders: state.orders.map(o =>
+          o.id === shipment.orderId
+            ? { ...o, status: 'completed' as const, shippedAt }
+            : o
+        ),
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 
   updateShipment: (id, updates) => {
-    set((state) => ({
-      shipments: state.shipments.map(s => s.id === id ? { ...s, ...updates } : s)
-    }))
+    set((state) => {
+      const next = {
+        ...state,
+        shipments: state.shipments.map(s => s.id === id ? { ...s, ...updates } : s)
+      }
+      saveToStorage(next)
+      return next
+    })
   },
 }))
 
